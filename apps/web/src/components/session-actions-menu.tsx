@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ModalOverlay,
+  Modal,
+  Dialog,
+} from "react-aria-components";
+import {
   PencilLineIcon,
   TrashIcon,
   FolderInputIcon,
   EllipsisHorizontalIcon,
 } from "@/components/icons/lucide";
 import { toast } from "@/components/ui/toast";
+import { Button } from "@/components/ui/button";
+import { TextField } from "@/components/ui/text-field";
+import { Input } from "@/components/ui/input";
 
 interface SessionActionsMenuProps {
   sessionId: string;
@@ -26,40 +34,47 @@ export function SessionActionsMenu({
   onRename,
   onMove,
 }: SessionActionsMenuProps) {
-  const [mode, setMode] = useState<"rename" | "move" | null>(null);
+  const [mode, setMode] = useState<"rename" | "move" | "delete" | null>(null);
   const [textValue, setTextValue] = useState("");
   const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (mode === "rename") setTextValue(sessionTitle);
     if (mode === "move") setTextValue("");
   }, [mode, sessionTitle]);
 
-  const runAction = async (fn: () => Promise<void>, label: string) => {
+  const closeDialogs = () => {
+    setMode(null);
+    setBusy(false);
+  };
+
+  const runAction = async (fn: () => Promise<void>, successLabel: string) => {
     setBusy(true);
     try {
       await fn();
-      setMode(null);
+      closeDialogs();
       onOpenChange(false);
-      toast.success(label);
+      toast.success(successLabel);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : `Failed to ${label.toLowerCase()}`,
+        error instanceof Error ? error.message : "Action failed",
       );
-    } finally {
       setBusy(false);
     }
   };
 
-  const itemClass = (danger = false) =>
-    `flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm transition-colors ${
-      danger
-        ? "text-danger-fg hover:bg-danger/10"
-        : "text-foreground hover:bg-muted/50"
-    }`;
+  const handleDelete = () => {
+    closeDialogs();
+    onOpenChange(false);
+    onDelete(sessionId);
+  };
+
+  const modalClass =
+    "fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4";
+  const dialogClass =
+    "w-full max-w-sm rounded-xl border border-border bg-bg shadow-2xl outline-hidden";
 
   return (
     <>
@@ -100,36 +115,36 @@ export function SessionActionsMenu({
             >
               <button
                 type="button"
-                className={itemClass()}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
                 onClick={() => {
                   onOpenChange(false);
                   setMode("rename");
                 }}
               >
-                <PencilLineIcon />
+                <PencilLineIcon className="size-4 text-muted-fg" />
                 Rename
               </button>
               <button
                 type="button"
-                className={itemClass()}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
                 onClick={() => {
                   onOpenChange(false);
                   setMode("move");
                 }}
               >
-                <FolderInputIcon />
+                <FolderInputIcon className="size-4 text-muted-fg" />
                 Move
               </button>
               <div className="my-1 h-px bg-border" />
               <button
                 type="button"
-                className={itemClass(true)}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger/10"
                 onClick={() => {
                   onOpenChange(false);
-                  onDelete(sessionId);
+                  setMode("delete");
                 }}
               >
-                <TrashIcon />
+                <TrashIcon className="size-4" />
                 Delete
               </button>
             </div>
@@ -138,112 +153,151 @@ export function SessionActionsMenu({
       )}
 
       {mode === "rename" && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setMode(null);
-          }}
+        <ModalOverlay
+          isOpen
+          onOpenChange={(open) => !open && closeDialogs()}
+          isDismissable
+          className={modalClass}
         >
-          <div className="w-full max-w-sm rounded-xl border border-border bg-bg p-5 shadow-2xl">
-            <h2 className="mb-1 text-lg font-semibold">Rename session</h2>
-            <p className="mb-4 text-sm text-muted-fg">
-              Give this session a new title.
-            </p>
-            <input
-              autoFocus
-              value={textValue}
-              onChange={(e) => setTextValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && textValue.trim() && !busy) {
-                  runAction(
-                    () => onRename(sessionId, textValue.trim()),
-                    "Session renamed",
-                  );
-                }
-                if (e.key === "Escape") setMode(null);
-              }}
-              placeholder="Session title"
-              className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-hidden focus:border-ring/70 focus:ring-3 focus:ring-ring/20"
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setMode(null)}
-                className="rounded-lg px-3 py-1.5 text-sm hover:bg-muted/50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!textValue.trim() || busy}
-                onClick={() =>
-                  runAction(
-                    () => onRename(sessionId, textValue.trim()),
-                    "Session renamed",
-                  )
-                }
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-fg disabled:opacity-50"
-              >
-                {busy ? "Saving..." : "Rename"}
-              </button>
-            </div>
-          </div>
-        </div>
+          <Modal className="outline-hidden">
+            <Dialog className={dialogClass} aria-label="Rename session">
+              <div className="px-5 pt-4 pb-2">
+                <h2 className="text-lg font-semibold text-fg">
+                  Rename session
+                </h2>
+                <p className="mt-1 text-sm text-muted-fg">
+                  Give this session a new title.
+                </p>
+              </div>
+              <div className="px-5 py-3">
+                <TextField autoFocus className="w-full">
+                  <Input
+                    ref={inputRef}
+                    value={textValue}
+                    onChange={(e) => setTextValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && textValue.trim() && !busy) {
+                        runAction(
+                          () => onRename(sessionId, textValue.trim()),
+                          "Session renamed",
+                        );
+                      }
+                    }}
+                    placeholder="Session title"
+                    className="w-full"
+                  />
+                </TextField>
+              </div>
+              <div className="flex flex-col-reverse justify-end gap-2 px-5 py-4 pt-2 sm:flex-row">
+                <Button intent="plain" isDisabled={busy} onPress={closeDialogs}>
+                  Cancel
+                </Button>
+                <Button
+                  intent="primary"
+                  isDisabled={!textValue.trim() || busy}
+                  onPress={() =>
+                    runAction(
+                      () => onRename(sessionId, textValue.trim()),
+                      "Session renamed",
+                    )
+                  }
+                >
+                  {busy ? "Saving..." : "Rename"}
+                </Button>
+              </div>
+            </Dialog>
+          </Modal>
+        </ModalOverlay>
       )}
 
       {mode === "move" && (
-        <div
-          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setMode(null);
-          }}
+        <ModalOverlay
+          isOpen
+          onOpenChange={(open) => !open && closeDialogs()}
+          isDismissable
+          className={modalClass}
         >
-          <div className="w-full max-w-sm rounded-xl border border-border bg-bg p-5 shadow-2xl">
-            <h2 className="mb-1 text-lg font-semibold">Move session</h2>
-            <p className="mb-4 text-sm text-muted-fg">
-              Move to another directory in the same project. Absolute path
-              required.
-            </p>
-            <input
-              autoFocus
-              value={textValue}
-              onChange={(e) => setTextValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && textValue.trim() && !busy) {
-                  runAction(
-                    () => onMove(sessionId, textValue.trim()),
-                    "Session moved",
-                  );
-                }
-                if (e.key === "Escape") setMode(null);
-              }}
-              placeholder="/path/to/directory"
-              className="w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-hidden focus:border-ring/70 focus:ring-3 focus:ring-ring/20"
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setMode(null)}
-                className="rounded-lg px-3 py-1.5 text-sm hover:bg-muted/50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!textValue.trim() || busy}
-                onClick={() =>
-                  runAction(
-                    () => onMove(sessionId, textValue.trim()),
-                    "Session moved",
-                  )
-                }
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-fg disabled:opacity-50"
-              >
-                {busy ? "Moving..." : "Move"}
-              </button>
-            </div>
-          </div>
-        </div>
+          <Modal className="outline-hidden">
+            <Dialog className={dialogClass} aria-label="Move session">
+              <div className="px-5 pt-4 pb-2">
+                <h2 className="text-lg font-semibold text-fg">
+                  Move session
+                </h2>
+                <p className="mt-1 text-sm text-muted-fg">
+                  Move to another directory in the same project. Absolute path
+                  required.
+                </p>
+              </div>
+              <div className="px-5 py-3">
+                <TextField autoFocus className="w-full">
+                  <Input
+                    ref={inputRef}
+                    value={textValue}
+                    onChange={(e) => setTextValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && textValue.trim() && !busy) {
+                        runAction(
+                          () => onMove(sessionId, textValue.trim()),
+                          "Session moved",
+                        );
+                      }
+                    }}
+                    placeholder="/path/to/directory"
+                    className="w-full"
+                  />
+                </TextField>
+              </div>
+              <div className="flex flex-col-reverse justify-end gap-2 px-5 py-4 pt-2 sm:flex-row">
+                <Button intent="plain" isDisabled={busy} onPress={closeDialogs}>
+                  Cancel
+                </Button>
+                <Button
+                  intent="primary"
+                  isDisabled={!textValue.trim() || busy}
+                  onPress={() =>
+                    runAction(
+                      () => onMove(sessionId, textValue.trim()),
+                      "Session moved",
+                    )
+                  }
+                >
+                  {busy ? "Moving..." : "Move"}
+                </Button>
+              </div>
+            </Dialog>
+          </Modal>
+        </ModalOverlay>
+      )}
+
+      {mode === "delete" && (
+        <ModalOverlay
+          isOpen
+          onOpenChange={(open) => !open && closeDialogs()}
+          isDismissable
+          className={modalClass}
+        >
+          <Modal className="outline-hidden">
+            <Dialog className={dialogClass} aria-label="Delete session">
+              <div className="px-5 pt-4 pb-2">
+                <h2 className="text-lg font-semibold text-fg">
+                  Delete session?
+                </h2>
+                <p className="mt-1 text-sm text-muted-fg">
+                  This will permanently delete the session. This action cannot
+                  be undone.
+                </p>
+              </div>
+              <div className="flex flex-col-reverse justify-end gap-2 px-5 py-4 pt-2 sm:flex-row">
+                <Button intent="plain" isDisabled={busy} onPress={closeDialogs}>
+                  Cancel
+                </Button>
+                <Button intent="danger" isDisabled={busy} onPress={handleDelete}>
+                  Delete
+                </Button>
+              </div>
+            </Dialog>
+          </Modal>
+        </ModalOverlay>
       )}
     </>
   );
