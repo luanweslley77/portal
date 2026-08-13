@@ -117,3 +117,12 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
   - Footer: `p-3` → `p-3 pb-1` → espaço abaixo dos selects: **4px**.
 - **Verificação (devtools, 390x844):** selects 44px, espaço abaixo 4px, textarea vazio 36px, footer **101px**.
 
+### 4.10 ⭐ CAUSA RAIZ REAL do "espaço vazio" (investigação profunda)
+
+- **Sintoma persistente:** o usuário via espaço vazio abaixo dos selects mesmo após todas as reduções de padding interno.
+- **Investigação (devtools):** o footer terminava em `y=811` mas o container pai (`_app.tsx:70` — `flex-1 overflow-auto p-4`) terminava em `y=843` — **32px de espaço vazio fora do footer**, entre ele e o bottom do container. Medidas internas (paddings 12px→4px) nunca atacavam esse gap.
+- **Causa raiz:** `session/$id.tsx:1148` — `<div className="flex h-full flex-col -m-4">`. O `-m-4` cancela o `p-4` do pai para o conteúdo "vazar" o padding, **mas** `h-full` (100%) resolve contra a content-box do pai (altura **sem** o padding). Resultado: wrapper media `750px` em vez dos `782px` do pai → 32px de folga no bottom.
+- **Fix:** `h-full` → `h-[calc(100%+2rem)]` (2rem = 32px = os dois paddings de 16px). Wrapper passa a medir 782px = pai, footer colado em `y=843`.
+- **Verificação final:** footer bottom `843` == wrapper bottom `843`; gap para o viewport `1px`; textarea 44px, selects 44px, espaço abaixo dos selects 4px, footer 109px.
+- **Aprendizado:** ao compensar padding com margem negativa em layout de altura total, `height: 100%` precisa somar o padding compensado — senão sobra espaço no bottom.
+

@@ -1145,7 +1145,7 @@ function SessionPage() {
   }, [port, provider, sending, sessionId]);
 
   return (
-    <div className="flex h-full flex-col -m-4">
+    <div className="-m-4 flex h-[calc(100%+2rem)] flex-col">
       <div
         className="flex-1 overflow-auto overflow-x-hidden"
         ref={chatContainerRef}
@@ -1289,7 +1289,7 @@ function SessionPage() {
                 }
               }}
               placeholder="Type your message... (use @ to mention files)"
-              className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-9 max-h-9 pb-1"}`}
+              className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-11 max-h-11 pb-1"}`}
               rows={5}
             />
             {input.trim() && (
