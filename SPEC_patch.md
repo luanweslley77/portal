@@ -195,3 +195,9 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 ### 6.4 Verificação empírica pós-fix
 
 - Sessão grande aberta + subagent explore rodando em paralelo: **apenas 2 GET /messages** (inicial + um eventual), resto são `session/status` leves. Antes: ~4 refetches de 2.7MB por segundo durante streaming.
+
+### 6.5 Segundo gargalo: reconversão legacy a cada delta
+
+- **Problema:** mesmo com o delta aplicado direto no cache, `sessionMessagesToLegacy` reconvertia **todas** as mensagens a cada mudança de `data` (cada delta criava novo array) — 726 msgs na sessão grande → todos os `MessageItem` re-renderizavam a cada ~1-2ms de streaming.
+- **Fix:** cache `legacyConversionCache` (Map por key de sessão, indexado por `message.id`), que reusa o objeto legacy convertido quando a **referência** do `SessionMessage` não mudou. `applyPartDelta`/`updateActiveAssistant` substituem só a mensagem alterada, preservando as demais referências → só a mensagem com delta é reconvertida por frame.
+- **Verificado no bundle deployado:** padrão `.get(e.id)` + `source===` presente.
