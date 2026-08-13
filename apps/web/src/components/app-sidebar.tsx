@@ -9,7 +9,7 @@ import {
   ShieldCheckIcon,
 } from "@/components/icons/lucide";
 import { ProviderIcon } from "@/components/icons/provider-icon";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -187,8 +187,6 @@ export default function AppSidebar(
 ) {
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
-  const longPressTimer = useRef<number | null>(null);
-  const longPressFired = useRef(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
   const { data: hostnameData } = useHostname();
@@ -301,39 +299,14 @@ export default function AppSidebar(
               <SidebarItem
                 key={session.id}
                 tooltip={session.title}
-                onPointerDown={(e) => {
-                  if (e.button !== 0 && e.pointerType === "mouse") return;
-                  longPressFired.current = false;
-                  longPressTimer.current = window.setTimeout(() => {
-                    longPressTimer.current = null;
-                    longPressFired.current = true;
-                    setMenuSessionId(session.id);
-                  }, 450);
+                onLongPress={() => {
+                  setMenuSessionId(session.id);
                 }}
-                onPointerUp={() => {
-                  if (longPressTimer.current !== null) {
-                    window.clearTimeout(longPressTimer.current);
-                    longPressTimer.current = null;
-                  }
-                  if (longPressFired.current) {
+                onPress={(e) => {
+                  if (menuSessionId) {
                     e.preventDefault();
                     e.stopPropagation();
-                    longPressFired.current = false;
                   }
-                }}
-                onPointerLeave={() => {
-                  if (longPressTimer.current !== null) {
-                    window.clearTimeout(longPressTimer.current);
-                    longPressTimer.current = null;
-                  }
-                  longPressFired.current = false;
-                }}
-                onPointerCancel={() => {
-                  if (longPressTimer.current !== null) {
-                    window.clearTimeout(longPressTimer.current);
-                    longPressTimer.current = null;
-                  }
-                  longPressFired.current = false;
                 }}
                 onContextMenu={(e) => {
                   e.preventDefault();

@@ -101,51 +101,51 @@ export function SessionActionsMenu({
           />
           {triggerRef.current && (
             <div
-              className="fixed z-[55] min-w-44 rounded-lg border border-border bg-bg p-1 shadow-2xl"
+              className="fixed z-[55] w-44 rounded-lg border border-border bg-bg p-1 shadow-2xl"
               style={{
                 top: Math.max(
                   triggerRef.current.getBoundingClientRect().bottom + 4,
                   8,
                 ),
-                left: Math.min(
-                  triggerRef.current.getBoundingClientRect().left,
-                  window.innerWidth - 200,
+                left: Math.max(
+                  triggerRef.current.getBoundingClientRect().left - 40,
+                  8,
                 ),
               }}
             >
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
                 onClick={() => {
                   onOpenChange(false);
                   setMode("rename");
                 }}
               >
-                <PencilLineIcon className="size-4 text-muted-fg" />
-                Rename
+                <PencilLineIcon className="size-4 shrink-0 text-muted-fg" />
+                <span className="min-w-0 flex-1">Rename</span>
               </button>
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
                 onClick={() => {
                   onOpenChange(false);
                   setMode("move");
                 }}
               >
-                <FolderInputIcon className="size-4 text-muted-fg" />
-                Move
+                <FolderInputIcon className="size-4 shrink-0 text-muted-fg" />
+                <span className="min-w-0 flex-1">Move</span>
               </button>
               <div className="my-1 h-px bg-border" />
               <button
                 type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger/10"
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger/10"
                 onClick={() => {
                   onOpenChange(false);
                   setMode("delete");
                 }}
               >
-                <TrashIcon className="size-4" />
-                Delete
+                <TrashIcon className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1">Delete</span>
               </button>
             </div>
           )}
