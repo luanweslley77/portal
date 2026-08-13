@@ -1210,7 +1210,7 @@ function SessionPage() {
         )}
       </div>
 
-      <div className="border-t border-border p-3 pb-2 shrink-0 relative">
+      <div className="border-t border-border p-3 shrink-0 relative">
         <FileMentionPopover
           isOpen={fileMention.isOpen}
           searchQuery={fileMention.searchQuery}

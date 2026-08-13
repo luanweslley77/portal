@@ -94,3 +94,9 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
   - Footer total **115px** (era ~200px) com textarea 44px + barra 44px.
   - Espaço abaixo dos selects: 8px; botão enviar oculto quando vazio, visível (40px) ao digitar.
 
+### 4.7 Simetria vertical final (feedback do usuário)
+
+- **Pedido:** o espaço entre os selects e a borda inferior do footer deve ser **igual** ao espaço entre a caixa de chat e a borda superior.
+- **Fix:** remover o `pb-2` (8px) → footer `p-3` simétrico (12px top e bottom).
+- **Verificação (devtools, 390x844):** espaço acima 13px (12px padding + 1px border) == espaço abaixo 12px; footer **119px**.
+
