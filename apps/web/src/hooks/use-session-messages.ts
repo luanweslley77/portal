@@ -60,13 +60,32 @@ const EMPTY_TOKENS = {
   },
 };
 
+const queuedTexts = new Map<string, Set<string>>();
+
+function getQueuedTexts(key: string) {
+  let set = queuedTexts.get(key);
+  if (!set) {
+    set = new Set();
+    queuedTexts.set(key, set);
+  }
+  return set;
+}
+
+export function markMessageQueued(key: string, text: string) {
+  getQueuedTexts(key).add(text);
+}
+
+export function clearMessageQueued(key: string, text: string) {
+  getQueuedTexts(key).delete(text);
+}
+
 const fetcher = async (url: string): Promise<SessionMessage[]> => {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to fetch messages");
   }
   const data = await response.json();
-  return normalizeFetchedMessages(data);
+  return reapplyQueuedMetadata(url, normalizeFetchedMessages(data));
 };
 
 function useBackend() {
@@ -160,6 +179,21 @@ function normalizeFetchedMessages(data: unknown) {
   }
 
   return sortSessionMessages(messages as SessionMessage[]);
+}
+
+export function reapplyQueuedMetadata(key: string, messages: SessionMessage[]) {
+  const queued = getQueuedTexts(key);
+  if (queued.size === 0) return messages;
+  return messages.map((message) => {
+    if (message.type !== "user" || !queued.has(message.text)) return message;
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata ?? {}),
+        portalQueued: true,
+      },
+    };
+  });
 }
 
 function isMessageWithParts(value: unknown): value is MessageWithParts {
@@ -774,6 +808,10 @@ export function addOptimisticMessage(
     },
   };
 
+  if (message.isQueued === true) {
+    markMessageQueued(key, optimisticMessage.text);
+  }
+
   mutate(
     key,
     (current: SessionMessage[] | undefined) => {
@@ -784,6 +822,7 @@ export function addOptimisticMessage(
   );
 
   return () => {
+    clearMessageQueued(key, optimisticMessage.text);
     mutate(key, previousMessages, { revalidate: false });
   };
 }
@@ -801,6 +840,16 @@ export function reconcileOptimisticMessage(
     key,
     (current: SessionMessage[] | undefined) => {
       const messages = current ?? [];
+      const optimistic = messages.find(
+        (message) =>
+          message.id === optimisticId ||
+          (actualMessage.type === "user" &&
+            message.type === "user" &&
+            message.text === actualMessage.text &&
+            message.metadata?.portalOptimistic === true),
+      );
+      const wasQueued = optimistic?.metadata?.portalQueued === true;
+
       const withoutOptimistic = messages.filter((message) => {
         if (message.id === optimisticId) return false;
         return !(
@@ -810,7 +859,23 @@ export function reconcileOptimisticMessage(
           message.metadata?.portalOptimistic === true
         );
       });
-      return sortSessionMessages([...withoutOptimistic, actualMessage]);
+
+      const reconciled =
+        actualMessage.type === "user" && wasQueued
+          ? {
+              ...actualMessage,
+              metadata: {
+                ...(actualMessage.metadata ?? {}),
+                portalQueued: true,
+              },
+            }
+          : actualMessage;
+
+      if (actualMessage.type === "user" && wasQueued) {
+        markMessageQueued(key, actualMessage.text);
+      }
+
+      return sortSessionMessages([...withoutOptimistic, reconciled]);
     },
     { revalidate: false },
   );
@@ -828,8 +893,10 @@ export function settleOptimisticMessage(
     key,
     (current: SessionMessage[] | undefined) => {
       if (!current) return current;
-      return current.map((message) => {
+      const settled = current.map((message) => {
         if (message.id !== messageId || message.type !== "user") return message;
+
+        clearMessageQueued(key, message.text);
 
         return {
           ...message,
@@ -840,6 +907,7 @@ export function settleOptimisticMessage(
           },
         };
       });
+      return settled;
     },
     { revalidate: false },
   );

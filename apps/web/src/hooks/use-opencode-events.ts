@@ -13,6 +13,7 @@ import type {
   SessionMessageAssistantTool,
 } from "@opencode-ai/sdk/v2";
 import {
+  clearMessageQueued,
   getMessagesKey,
   sortSessionMessages,
 } from "@/hooks/use-session-messages";
@@ -199,6 +200,39 @@ function upsertMessage(messages: SessionMessage[], message: SessionMessage) {
     next.push(message);
   }
   return sortSessionMessages(next);
+}
+
+function upsertPromptedMessage(
+  messages: SessionMessage[],
+  key: string,
+  event: Extract<RuntimeEvent, { type: "session.next.prompted" }>,
+): SessionMessage[] {
+  const text = event.properties.prompt.text;
+  const dequeue = (items: SessionMessage[]) =>
+    items.filter(
+      (message) =>
+        !(
+          message.type === "user" &&
+          message.text === text &&
+          message.metadata?.portalQueued === true
+        ),
+    );
+
+  clearMessageQueued(key, text);
+
+  return upsertMessage(
+    removeMatchingOptimisticUser(dequeue(messages), text),
+    {
+      id: event.id,
+      type: "user",
+      text,
+      files: event.properties.prompt.files,
+      agents: event.properties.prompt.agents,
+      time: {
+        created: event.properties.timestamp,
+      },
+    },
+  );
 }
 
 function replaceMessageAt(
@@ -398,18 +432,10 @@ function applyEvent(
 
     case "session.next.prompted":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        upsertMessage(
-          removeMatchingOptimisticUser(items, event.properties.prompt.text),
-          {
-            id: event.id,
-            type: "user",
-            text: event.properties.prompt.text,
-            files: event.properties.prompt.files,
-            agents: event.properties.prompt.agents,
-            time: {
-              created: event.properties.timestamp,
-            },
-          },
+        upsertPromptedMessage(
+          items,
+          getMessagesKey(port, event.properties.sessionID, provider),
+          event,
         ),
       );
       break;

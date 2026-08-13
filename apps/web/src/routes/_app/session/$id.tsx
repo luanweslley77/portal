@@ -22,6 +22,7 @@ import {
   IconSquareFeather,
   IconUser,
   InformationCircleIcon,
+  ListPlusIcon,
   SendIcon,
 } from "@/components/icons/lucide";
 import { useAgentStore } from "@/stores/agent-store";
@@ -1082,16 +1083,11 @@ function SessionPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const messageText = input.trim();
-    if (
-      !messageText ||
-      !sessionId ||
-      !port ||
-      sending ||
-      submitLockRef.current
-    ) {
+    if (!messageText || !sessionId || !port || submitLockRef.current) {
       return;
     }
 
+    const wasSending = sending;
     submitLockRef.current = true;
     setIsSubmitting(true);
     const messageId = createClientMessageId();
@@ -1116,7 +1112,7 @@ function SessionPage() {
           text: messageText,
         },
       ],
-      isQueued: sending,
+      isQueued: wasSending,
     };
     addOptimisticMessage(port, sessionId, optimisticMessage, provider);
 
@@ -1283,7 +1279,7 @@ function SessionPage() {
                 }
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (input.trim() && !sending && !submitLockRef.current) {
+                  if (input.trim() && !submitLockRef.current) {
                     handleSubmit(e as unknown as React.FormEvent);
                   }
                 }
@@ -1295,15 +1291,25 @@ function SessionPage() {
             {input.trim() && (
               <Button
                 type="submit"
-                isDisabled={!input.trim() || sending}
+                isDisabled={!input.trim() || isSubmitting}
                 isCircle
                 size="sq-sm"
-                aria-label={sending ? "Sending message" : "Send message"}
+                aria-label={
+                  isSubmitting
+                    ? "Sending message"
+                    : sending
+                      ? "Queue message"
+                      : "Send message"
+                }
                 className="absolute right-3 bottom-3"
               >
-                {sending ? (
+                {isSubmitting ? (
                   <span className="grid size-4 place-items-center">
                     <Loader className="size-4" aria-label="Sending message" />
+                  </span>
+                ) : sending ? (
+                  <span className="grid size-4 place-items-center">
+                    <ListPlusIcon size="16px" />
                   </span>
                 ) : (
                   <span className="grid size-4 place-items-center">

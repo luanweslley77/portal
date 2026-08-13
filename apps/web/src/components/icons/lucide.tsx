@@ -21,6 +21,7 @@ import {
   Info,
   KeyRound,
   LifeBuoy,
+  ListPlus,
   LogOut,
   MessageCircle,
   MessageSquare,
@@ -86,6 +87,7 @@ export const HomeIcon = createAppIcon(Home);
 export const InformationCircleIcon = createAppIcon(Info);
 export const KeyIcon = createAppIcon(KeyRound);
 export const LifebuoyIcon = createAppIcon(LifeBuoy);
+export const ListPlusIcon = createAppIcon(ListPlus);
 export const MinusIcon = createAppIcon(Minus);
 export const MoonIcon = createAppIcon(Moon);
 export const PanelLeftIcon = createAppIcon(PanelLeft);

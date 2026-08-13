@@ -135,3 +135,39 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
   - `AgentSelect`: mantém `w-28` (112px) à esquerda.
 - **Verificação (devtools, 390x844):** agent left=13px (112px), model 208→**244px** (right=377), espaços laterais simétricos 12px.
 
+## 5. Mensagens QUEUED — enfileirar enquanto o agente trabalha
+
+### 5.1 Problema (feedback do usuário)
+
+- Enquanto o agente trabalha/pensa, o botão de enviar da textarea ficava **girando (Loader)** e **desabilitado** — impossível enviar/enfileirar.
+- Mensagens enfileiradas não mostravam a label `Queued`.
+
+### 5.2 Causa raiz
+
+- `handleSubmit` bloqueava com `sending ||` — nada era enviado quando o agente estava ocupado.
+- `isQueued: sending` na mensagem otimista era sempre `false` (o submit nunca passava com `sending`).
+- A label `Queued` (`$id.tsx`) só renderiza com `message.isQueued` = `metadata.portalQueued`, que nunca era setado.
+- Refetch (polling 1.5s) substituía as otimistas queued por mensagens reais do servidor (sem metadata local) — a label sumiria mesmo se fosse setada.
+
+### 5.3 Fix
+
+1. **`$id.tsx`:**
+   - `handleSubmit`/Enter: removido `sending ||` do bloqueio (mantém só `submitLockRef`).
+   - `const wasSending = sending` capturado antes do reset; `isQueued: wasSending` na otimista.
+   - Botão de enviar: `isDisabled={!input.trim() || isSubmitting}`; ícone **spinner só em `isSubmitting`**; `ListPlusIcon` quando `sending` (agente ocupado → vai pra fila); `SendIcon` normal.
+2. **`lucide.tsx`:** novo `ListPlusIcon` (import `ListPlus` do lucide-react).
+3. **`use-session-messages.ts`:** registro `queuedTexts` (Map key→Set de textos) que sobrevive a refetches:
+   - `markMessageQueued`/`clearMessageQueued`/`reapplyQueuedMetadata`.
+   - `fetcher` reaplica `portalQueued` após refetch.
+   - `addOptimisticMessage`: marca se `isQueued`.
+   - `reconcileOptimisticMessage`: preserva `portalQueued` da otimista na mensagem real.
+   - `settleOptimisticMessage`: limpa registro.
+4. **`use-opencode-events.ts`:** `upsertPromptedMessage` (novo) — quando `session.next.prompted` chega (backend começou a processar), remove `portalQueued` + limpa registro.
+
+### 5.4 Estados do botão de enviar
+
+| Estado                        | Ícone            |
+| ----------------------------- | ---------------- |
+| Ocioso                        | SendIcon         |
+| Agente ocupado (`sending`)    | ListPlusIcon     |
+| Enviando HTTP (`isSubmitting`)| Loader (spinner) |
