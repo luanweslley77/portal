@@ -860,6 +860,7 @@ function SessionPage() {
 
   const [sendError, setSendError] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -1288,6 +1289,8 @@ function SessionPage() {
                   }
                 }
               }}
+              onFocus={() => setIsComposerFocused(true)}
+              onBlur={() => setIsComposerFocused(false)}
               placeholder="Type your message... (use @ to mention files)"
               className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-11 max-h-11 pb-2"}`}
               rows={5}
@@ -1311,10 +1314,12 @@ function SessionPage() {
               )}
             </Button>
           </div>
-          <div className="mt-2 flex items-center justify-end gap-2">
-            {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
-            <ModelSelect />
-          </div>
+          {input.trim() || isComposerFocused ? (
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
+              <ModelSelect />
+            </div>
+          ) : null}
         </form>
       </div>
     </div>

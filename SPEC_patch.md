@@ -72,3 +72,12 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 - **Digitando (3 linhas):** textarea cresce para `128px` (max-h-32), footer `205px` — comportamento anterior preservado.
 - Selects (Agent/Model) continuam acessíveis na barra compacta (`mt-2`).
 
+### 4.5 Melhoria adicional: barra de selects colapsável
+
+- **Problema:** a barra `AgentSelect` + `ModelSelect` (44px) ficava **sempre visível** abaixo do textarea — junto com o textarea, somava ~121px de footer mesmo sem digitar.
+- **Fix:** estado `isComposerFocused` — a barra só renderiza quando `input.trim()` **ou** foco no textarea (`onFocus`/`onBlur`).
+- **Verificação (devtools):**
+  - Sem foco + vazio: footer **69px** (só textarea 44px + paddings), barra oculta.
+  - Foco no textarea: barra reaparece (footer 121px) — permite trocar agent/model antes de digitar.
+  - Com conteúdo: barra permanece visível.
+
