@@ -323,3 +323,14 @@ Relato (celular real, build anterior): long-press abria o popover com Rename/Mov
 4. `suppressNavRef` removido (morto); indentação corrigida.
 
 **Validação (devtools, teste limpo com instrumentação completa de eventos):** pointerdown (item) → fire 450ms → menu abre → pointerup → NÃO navega (guard captura no document antes do item). E2E Round 6 (general): 11/11 PASS incluindo click real nos itens do menu (dialogs abrem), clamp no fim das duas listas, kebab inerte/oculto, hover desktop.
+
+### Round 3 — REFATORAÇÃO: delegar ao react-aria (simplicidade)
+O código acumulou 3 camadas de mitigação manual (timers de long-press + guards de navegação + portal/clamp do card). Refatorado para delegar ao react-aria:
+
+**O que mudou:**
+1. `session-actions-menu.tsx` (~353 → ~250 linhas): o card custom (createPortal + useLayoutEffect/clamp + suppressNextClick + overlay + buttons) foi SUBSTITUÍDO por `Menu` controlado do react-aria (`MenuTrigger` + `MenuContent` popover "bottom end") com 3 `MenuItem` (Rename/Move/Delete) + separator. Flip automático do Popover resolve o Delete cortado; dismiss automático (press fora/scroll/Escape) resolve o atravessar; sem portal manual. Dialogs (ModalOverlay) mantidos.
+2. `app-sidebar.tsx`: removidos wrapper div, longPressTimer, onPointer*Capture e guards → `SidebarItem` direto com `onContextMenu` (preventDefault + abrir menu). Long-press nativo do browser dispara contextmenu em links (Android/iOS) sem click fantasma.
+3. `empty-state.tsx`: idem (li com onContextMenu).
+4. `lib/long-press.ts`: DELETADO.
+
+**Resultado E2E (Round 7, general): 8/8 PASS** — contexto abre menu sem navegar (href "/"), menu dentro do viewport, flip no fim da lista (Delete visível), toque real em Rename/Move/Delete abre dialogs, dismiss sem navegar, kebab inerte no mobile (opacity 0 / pointer-events none) e hover-visível no desktop.

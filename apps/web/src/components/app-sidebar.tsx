@@ -9,7 +9,7 @@ import {
   ShieldCheckIcon,
 } from "@/components/icons/lucide";
 import { ProviderIcon } from "@/components/icons/provider-icon";
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -54,7 +54,6 @@ import {
   useInstances,
 } from "@/hooks/use-opencode";
 import { SessionActionsMenu } from "@/components/session-actions-menu";
-import { installReleaseGuards } from "@/lib/long-press";
 import { useInstanceStore } from "@/stores/instance-store";
 import { useNavigate, useMatch } from "@tanstack/react-router";
 import type { Session } from "@opencode-ai/sdk/v2";
@@ -188,7 +187,6 @@ export default function AppSidebar(
 ) {
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
   const { data: hostnameData } = useHostname();
@@ -298,68 +296,35 @@ export default function AppSidebar(
 
           <SidebarSection label="Sessions">
             {sessions.map((session) => (
-              <div
+              <SidebarItem
                 key={session.id}
-                className="col-span-full min-w-0"
-                onPointerDownCapture={(e) => {
-                  if (
-                    e.pointerType === "touch" ||
-                    e.pointerType === "pen"
-                  ) {
-                    if (longPressTimer.current) {
-                      clearTimeout(longPressTimer.current);
-                      longPressTimer.current = null;
-                    }
-                    longPressTimer.current = setTimeout(() => {
-                      longPressTimer.current = null;
-                      setMenuSessionId(session.id);
-                      installReleaseGuards();
-                    }, 450);
-                  }
-                }}
-                onPointerUpCapture={() => {
-                  if (longPressTimer.current) {
-                    clearTimeout(longPressTimer.current);
-                    longPressTimer.current = null;
-                  }
-                }}
-                onPointerCancelCapture={() => {
-                  if (longPressTimer.current) {
-                    clearTimeout(longPressTimer.current);
-                    longPressTimer.current = null;
-                  }
+                tooltip={session.title}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenuSessionId(session.id);
                 }}
               >
-                <SidebarItem
-                  tooltip={session.title}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenuSessionId(session.id);
-                    installReleaseGuards();
-                  }}
-                >
-                  {() => (
-                    <>
-                      <SidebarLink href={`/session/${session.id}`}>
-                        <SidebarLabel>
-                          {truncateTitle(session.title)}
-                        </SidebarLabel>
-                      </SidebarLink>
-                      <SessionActionsMenu
-                        sessionId={session.id}
-                        sessionTitle={session.title}
-                        isOpen={menuSessionId === session.id}
-                        onOpenChange={(open) =>
-                          setMenuSessionId(open ? session.id : null)
-                        }
-                        onDelete={handleDeleteSession}
-                        onRename={handleRenameSession}
-                        onMove={handleMoveSession}
-                      />
-                    </>
-                  )}
-                </SidebarItem>
-              </div>
+                {() => (
+                  <>
+                    <SidebarLink href={`/session/${session.id}`}>
+                      <SidebarLabel>
+                        {truncateTitle(session.title)}
+                      </SidebarLabel>
+                    </SidebarLink>
+                    <SessionActionsMenu
+                      sessionId={session.id}
+                      sessionTitle={session.title}
+                      isOpen={menuSessionId === session.id}
+                      onOpenChange={(open) =>
+                        setMenuSessionId(open ? session.id : null)
+                      }
+                      onDelete={handleDeleteSession}
+                      onRename={handleRenameSession}
+                      onMove={handleMoveSession}
+                    />
+                  </>
+                )}
+              </SidebarItem>
             ))}
           </SidebarSection>
         </SidebarSectionGroup>

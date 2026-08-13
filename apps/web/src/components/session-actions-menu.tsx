@@ -1,5 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import {
   ModalOverlay,
   Modal,
@@ -15,6 +14,14 @@ import { toast } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { Input } from "@/components/ui/input";
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuSeparator,
+  MenuTrigger,
+} from "@/components/ui/menu";
+import { SidebarMenuTrigger } from "@/components/ui/sidebar";
 
 interface SessionActionsMenuProps {
   sessionId: string;
@@ -38,33 +45,7 @@ export function SessionActionsMenu({
   const [mode, setMode] = useState<"rename" | "move" | "delete" | null>(null);
   const [textValue, setTextValue] = useState("");
   const [busy, setBusy] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null!);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
-
-  useLayoutEffect(() => {
-    if (!isOpen) return;
-    const compute = () => {
-      const trigger = triggerRef.current;
-      const card = cardRef.current;
-      if (!trigger || !card) return;
-      const tr = trigger.getBoundingClientRect();
-      const cardHeight = card.getBoundingClientRect().height;
-      const gap = 4;
-      let top = tr.bottom + gap;
-      if (top + cardHeight > window.innerHeight - 8) {
-        top = Math.max(8, tr.top - cardHeight - gap);
-      }
-      setPosition({
-        top,
-        right: Math.max(window.innerWidth - tr.right + 8, 8),
-      });
-    };
-    compute();
-    window.addEventListener("resize", compute);
-    return () => window.removeEventListener("resize", compute);
-  }, [isOpen, sessionId]);
 
   useEffect(() => {
     if (mode === "rename") setTextValue(sessionTitle);
@@ -97,31 +78,6 @@ export function SessionActionsMenu({
     onDelete(sessionId);
   };
 
-  const suppressClickRef = useRef(false);
-
-  const suppressNextClick = () => {
-    suppressClickRef.current = true;
-    const guard = (e: MouseEvent) => {
-      if (!suppressClickRef.current) return;
-      suppressClickRef.current = false;
-      e.preventDefault();
-      e.stopPropagation();
-      document.removeEventListener("click", guard, true);
-    };
-    document.addEventListener("click", guard, true);
-    setTimeout(() => {
-      suppressClickRef.current = false;
-      document.removeEventListener("click", guard, true);
-    }, 600);
-  };
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onScroll = () => onOpenChange(false);
-    document.addEventListener("scroll", onScroll, true);
-    return () => document.removeEventListener("scroll", onScroll, true);
-  }, [isOpen, onOpenChange]);
-
   const modalClass =
     "fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4";
   const dialogClass =
@@ -129,77 +85,39 @@ export function SessionActionsMenu({
 
   return (
     <>
-      <Button
-        ref={triggerRef}
-        type="button"
-        aria-label="Session options"
-        intent="plain"
-        className="absolute right-0 top-0 z-10 h-full items-center justify-end rounded-none pr-2.5 text-muted-fg opacity-0 pointer-events-none hover:text-foreground focus-visible:opacity-100 group-hover/sidebar-item:pointer-events-auto group-hover/sidebar-item:opacity-100 group-focus-visible/sidebar-item:pointer-events-auto group-focus-visible/sidebar-item:opacity-100"
-        onPress={() => {
-          onOpenChange(!isOpen);
-        }}
-      >
-        <EllipsisHorizontalIcon />
-      </Button>
-
-      {isOpen &&
-        createPortal(
-          <>
-            <div
-              className="fixed inset-0 z-50"
-              onMouseDown={() => onOpenChange(false)}
-              onTouchStart={() => {
-                onOpenChange(false);
-                suppressNextClick();
-              }}
-            />
-            <div
-              ref={cardRef}
-              className="fixed z-[55] max-h-[calc(100svh-16px)] w-44 touch-manipulation overflow-y-auto rounded-lg border border-border bg-bg p-1 shadow-2xl"
-              style={
-                position
-                  ? { top: position.top, right: position.right }
-                  : undefined
-              }
-            >
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
-                onClick={() => {
-                  onOpenChange(false);
-                  setMode("rename");
-                }}
-              >
-                <PencilLineIcon className="size-4 shrink-0 text-muted-fg" />
-                <span className="min-w-0 flex-1">Rename</span>
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-foreground transition-colors hover:bg-muted/50"
-                onClick={() => {
-                  onOpenChange(false);
-                  setMode("move");
-                }}
-              >
-                <FolderInputIcon className="size-4 shrink-0 text-muted-fg" />
-                <span className="min-w-0 flex-1">Move</span>
-              </button>
-              <div className="my-1 h-px bg-border" />
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-danger-fg transition-colors hover:bg-danger/10"
-                onClick={() => {
-                  onOpenChange(false);
-                  setMode("delete");
-                }}
-              >
-                <TrashIcon className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1">Delete</span>
-              </button>
-            </div>
-          </>,
-          document.body,
-        )}
+      <Menu isOpen={isOpen} onOpenChange={onOpenChange}>
+        <MenuTrigger
+          aria-label="Session options"
+          className="absolute right-0 top-0 h-full w-auto items-center justify-end rounded-none pr-2.5 text-muted-fg opacity-0 pointer-events-none hover:text-foreground focus-visible:opacity-100 group-hover/sidebar-item:pointer-events-auto group-hover/sidebar-item:opacity-100 group-focus-visible/sidebar-item:pointer-events-auto group-focus-visible/sidebar-item:opacity-100"
+        >
+          <EllipsisHorizontalIcon />
+        </MenuTrigger>
+        <MenuContent popover={{ placement: "bottom end" }} className="w-44">
+          <MenuItem
+            textValue="Rename"
+            onAction={() => setMode("rename")}
+          >
+            <PencilLineIcon />
+            Rename
+          </MenuItem>
+          <MenuItem
+            textValue="Move"
+            onAction={() => setMode("move")}
+          >
+            <FolderInputIcon />
+            Move
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            textValue="Delete"
+            intent="danger"
+            onAction={() => setMode("delete")}
+          >
+            <TrashIcon />
+            Delete
+          </MenuItem>
+        </MenuContent>
+      </Menu>
 
       {mode === "rename" && (
         <ModalOverlay

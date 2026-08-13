@@ -1,12 +1,11 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { IconGridPlus } from "@/components/icons/lucide";
 import { Button } from "@/components/ui/button";
 import { Keyboard } from "@/components/ui/keyboard";
 import { Link } from "@/components/ui/link";
 import { SessionActionsMenu } from "@/components/session-actions-menu";
 import { toast } from "@/components/ui/toast";
-import { installReleaseGuards } from "@/lib/long-press";
 import useMediaQuery from "@/hooks/use-media-query";
 import {
   useSessions,
@@ -27,7 +26,6 @@ export default function EmptyState() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isMobile } = useMediaQuery();
   const { data: sessionsData, error, isLoading, mutate } = useSessions();
   const createSession = useCreateSession();
@@ -129,33 +127,9 @@ export default function EmptyState() {
                 <li
                   key={session.id}
                   className="group relative flex items-center rounded-lg hover:bg-secondary/50 transition-colors"
-                  onPointerDownCapture={(e) => {
-                    if (
-                      e.pointerType === "touch" ||
-                      e.pointerType === "pen"
-                    ) {
-                      if (longPressTimer.current) {
-                        clearTimeout(longPressTimer.current);
-                        longPressTimer.current = null;
-                      }
-                      longPressTimer.current = setTimeout(() => {
-                        longPressTimer.current = null;
-                        setMenuSessionId(session.id);
-                        installReleaseGuards();
-                      }, 450);
-                    }
-                  }}
-                  onPointerUpCapture={() => {
-                    if (longPressTimer.current) {
-                      clearTimeout(longPressTimer.current);
-                      longPressTimer.current = null;
-                    }
-                  }}
-                  onPointerCancelCapture={() => {
-                    if (longPressTimer.current) {
-                      clearTimeout(longPressTimer.current);
-                      longPressTimer.current = null;
-                    }
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenuSessionId(session.id);
                   }}
                 >
                   <Link
