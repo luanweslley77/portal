@@ -1094,32 +1094,44 @@ function SessionPage() {
     setSendError(null);
 
     const isShellCommand = messageText.startsWith("!");
+    const firstLine = messageText.split("\n")[0];
+    const [firstWord, ...firstWordArgs] = firstLine.split(" ");
+    const isBuiltinCommand =
+      messageText.startsWith("/") &&
+      ["undo", "redo", "compact", "share", "unshare", "fork"].includes(
+        firstWord.slice(1),
+      );
     const isSlashCommand =
-      messageText.startsWith("/") && commands.some((command) => {
-        const firstLine = messageText.split("\n")[0];
-        const [name] = firstLine.split(" ");
-        return command.name === name.slice(1);
-      });
+      !isBuiltinCommand &&
+      messageText.startsWith("/") &&
+      commands.some((command) => command.name === firstWord.slice(1));
 
-    if (isShellCommand || isSlashCommand) {
+    if (isShellCommand || isSlashCommand || isBuiltinCommand) {
       void (async () => {
         try {
-          const [firstLine, ...restLines] = messageText.split("\n");
-          const [, ...firstLineArgs] = firstLine.split(" ");
+          const [firstLineText, ...restLines] = messageText.split("\n");
+          const [, ...firstLineArgs] = firstLineText.split(" ");
           const args =
             firstLineArgs.join(" ") +
             (restLines.length > 0 ? "\n" + restLines.join("\n") : "");
 
-          const url = isShellCommand
-            ? `${apiBase}/session/${sessionId}/shell`
-            : `${apiBase}/session/${sessionId}/command`;
-          const body = isShellCommand
-            ? { messageID: messageId, command: firstLine.slice(1) }
-            : {
-                messageID: messageId,
-                command: firstLine.split(" ")[0].slice(1),
-                arguments: args,
-              };
+          let url: string;
+          let body: Record<string, unknown>;
+
+          if (isShellCommand) {
+            url = `${apiBase}/session/${sessionId}/shell`;
+            body = { messageID: messageId, command: firstLineText.slice(1) };
+          } else if (isBuiltinCommand) {
+            url = `${apiBase}/session/${sessionId}/builtin`;
+            body = { action: firstWord.slice(1) };
+          } else {
+            url = `${apiBase}/session/${sessionId}/command`;
+            body = {
+              messageID: messageId,
+              command: firstWord.slice(1),
+              arguments: args,
+            };
+          }
 
           const response = await fetch(url, {
             method: "POST",

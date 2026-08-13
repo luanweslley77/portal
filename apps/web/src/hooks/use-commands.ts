@@ -8,6 +8,16 @@ export interface SlashCommand {
   source?: string;
 }
 
+const BUILTIN_COMMANDS: SlashCommand[] = [
+  { name: "undo", description: "Revert the last message", source: "builtin" },
+  { name: "redo", description: "Restore a reverted message", source: "builtin" },
+  { name: "compact", description: "Summarize the session", source: "builtin" },
+  { name: "share", description: "Share the session", source: "builtin" },
+  { name: "unshare", description: "Stop sharing the session", source: "builtin" },
+  { name: "fork", description: "Fork the session", source: "builtin" },
+  { name: "rename", description: "Rename the session", source: "builtin" },
+];
+
 const fetcher = async (url: string): Promise<SlashCommand[]> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch commands: ${res.status}`);
@@ -34,5 +44,9 @@ export function useCommands() {
     revalidateOnFocus: false,
   });
 
-  return { commands: data ?? [], error, isLoading };
+  return {
+    commands: [...BUILTIN_COMMANDS, ...(data ?? [])],
+    error,
+    isLoading,
+  };
 }
