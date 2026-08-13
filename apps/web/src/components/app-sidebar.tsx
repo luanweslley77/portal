@@ -2,16 +2,14 @@ import {
   ArrowRightStartOnRectangleIcon,
   ChevronUpDownIcon,
   Cog6ToothIcon,
-  EllipsisHorizontalIcon,
   FileDiffIcon,
   HomeIcon,
   LifebuoyIcon,
   PlusIcon,
   ShieldCheckIcon,
-  TrashIcon,
 } from "@/components/icons/lucide";
 import { ProviderIcon } from "@/components/icons/provider-icon";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -41,7 +39,6 @@ import {
   SidebarItem,
   SidebarLabel,
   SidebarLink,
-  SidebarMenuTrigger,
   SidebarRail,
   SidebarSection,
   SidebarSectionGroup,
@@ -50,10 +47,13 @@ import {
   useSessions,
   useCreateSession,
   useDeleteSession,
+  useUpdateSession,
+  useMoveSession,
   useHostname,
   useGitDiff,
   useInstances,
 } from "@/hooks/use-opencode";
+import { SessionActionsMenu } from "@/components/session-actions-menu";
 import { useInstanceStore } from "@/stores/instance-store";
 import { useNavigate, useMatch } from "@tanstack/react-router";
 import type { Session } from "@opencode-ai/sdk/v2";
@@ -186,6 +186,9 @@ export default function AppSidebar(
   props: React.ComponentProps<typeof Sidebar>,
 ) {
   const [creating, setCreating] = useState(false);
+  const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const longPressFired = useRef(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
   const { data: hostnameData } = useHostname();
@@ -193,6 +196,8 @@ export default function AppSidebar(
   const { data: sessionsData, mutate: mutateSessions } = useSessions();
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
+  const updateSession = useUpdateSession();
+  const moveSession = useMoveSession();
   const sessions: Session[] = sessionsData ?? [];
 
   const { data: diffData } = useGitDiff();
@@ -243,6 +248,16 @@ export default function AppSidebar(
     }
   }
 
+  async function handleRenameSession(sessionId: string, title: string) {
+    await updateSession(sessionId, title);
+    await mutateSessions();
+  }
+
+  async function handleMoveSession(sessionId: string, directory: string) {
+    await moveSession(sessionId, directory);
+    await mutateSessions();
+  }
+
   return (
     <Sidebar {...props}>
       <SidebarHeader>
@@ -283,35 +298,66 @@ export default function AppSidebar(
 
           <SidebarSection label="Sessions">
             {sessions.map((session) => (
-              <SidebarItem key={session.id} tooltip={session.title}>
-                {({ isCollapsed, isFocused }) => (
+              <SidebarItem
+                key={session.id}
+                tooltip={session.title}
+                onPointerDown={(e) => {
+                  if (e.button !== 0 && e.pointerType === "mouse") return;
+                  longPressFired.current = false;
+                  longPressTimer.current = window.setTimeout(() => {
+                    longPressTimer.current = null;
+                    longPressFired.current = true;
+                    setMenuSessionId(session.id);
+                  }, 450);
+                }}
+                onPointerUp={() => {
+                  if (longPressTimer.current !== null) {
+                    window.clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                  }
+                  if (longPressFired.current) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    longPressFired.current = false;
+                  }
+                }}
+                onPointerLeave={() => {
+                  if (longPressTimer.current !== null) {
+                    window.clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                  }
+                  longPressFired.current = false;
+                }}
+                onPointerCancel={() => {
+                  if (longPressTimer.current !== null) {
+                    window.clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                  }
+                  longPressFired.current = false;
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenuSessionId(session.id);
+                }}
+              >
+                {() => (
                   <>
                     <SidebarLink href={`/session/${session.id}`}>
                       <SidebarLabel>
                         {truncateTitle(session.title)}
                       </SidebarLabel>
                     </SidebarLink>
-                    {(!isCollapsed || isFocused) && (
-                      <Menu>
-                        <SidebarMenuTrigger aria-label="Session options">
-                          <EllipsisHorizontalIcon />
-                        </SidebarMenuTrigger>
-                        <MenuContent
-                          popover={{
-                            offset: 0,
-                            placement: "right top",
-                          }}
-                        >
-                          <MenuItem
-                            intent="danger"
-                            onAction={() => handleDeleteSession(session.id)}
-                          >
-                            <TrashIcon />
-                            Delete Session
-                          </MenuItem>
-                        </MenuContent>
-                      </Menu>
-                    )}
+                    <SessionActionsMenu
+                      sessionId={session.id}
+                      sessionTitle={session.title}
+                      isOpen={menuSessionId === session.id}
+                      onOpenChange={(open) =>
+                        setMenuSessionId(open ? session.id : null)
+                      }
+                      onDelete={handleDeleteSession}
+                      onRename={handleRenameSession}
+                      onMove={handleMoveSession}
+                    />
                   </>
                 )}
               </SidebarItem>

@@ -15,7 +15,6 @@ const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "share", description: "Share the session", source: "builtin" },
   { name: "unshare", description: "Stop sharing the session", source: "builtin" },
   { name: "fork", description: "Fork the session", source: "builtin" },
-  { name: "rename", description: "Rename the session", source: "builtin" },
 ];
 
 const fetcher = async (url: string): Promise<SlashCommand[]> => {

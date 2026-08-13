@@ -249,3 +249,46 @@ export function useAbortSession() {
     return res.json();
   };
 }
+
+export function useUpdateSession() {
+  const backend = useBackend();
+
+  return async (sessionId: string, title: string) => {
+    if (!backend) throw new Error("No instance selected");
+
+    const res = await fetch(`${backend.basePath}/session/${sessionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Failed to rename session: ${res.status}`);
+    }
+
+    return res.json();
+  };
+}
+
+export function useMoveSession() {
+  const backend = useBackend();
+
+  return async (sessionId: string, directory: string) => {
+    if (!backend) throw new Error("No instance selected");
+
+    const res = await fetch(`${backend.basePath}/session/${sessionId}/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ directory }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(
+        body?.data?.message ?? `Failed to move session: ${res.status}`,
+      );
+    }
+
+    return res.json();
+  };
+}

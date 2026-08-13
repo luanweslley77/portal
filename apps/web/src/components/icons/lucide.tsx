@@ -13,6 +13,7 @@ import {
   FileDiff,
   FileText,
   Folder,
+  FolderInput,
   GitPullRequest,
   Globe,
   GripVertical,
@@ -81,6 +82,8 @@ export const CpuChipIcon = createAppIcon(Cpu);
 export const DocumentIcon = createAppIcon(FileText);
 export const EllipsisHorizontalIcon = createAppIcon(Ellipsis);
 export const FolderIcon = createAppIcon(Folder);
+export const FolderInputIcon = createAppIcon(FolderInput);
+export const PencilLineIcon = createAppIcon(PenLine);
 export const GlobeAltIcon = createAppIcon(Globe);
 export const GripVerticalIcon = createAppIcon(GripVertical);
 export const HomeIcon = createAppIcon(Home);

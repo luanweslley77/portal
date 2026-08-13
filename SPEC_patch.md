@@ -201,3 +201,48 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 - **Problema:** mesmo com o delta aplicado direto no cache, `sessionMessagesToLegacy` reconvertia **todas** as mensagens a cada mudança de `data` (cada delta criava novo array) — 726 msgs na sessão grande → todos os `MessageItem` re-renderizavam a cada ~1-2ms de streaming.
 - **Fix:** cache `legacyConversionCache` (Map por key de sessão, indexado por `message.id`), que reusa o objeto legacy convertido quando a **referência** do `SessionMessage` não mudou. `applyPartDelta`/`updateActiveAssistant` substituem só a mensagem alterada, preservando as demais referências → só a mensagem com delta é reconvertida por frame.
 - **Verificado no bundle deployado:** padrão `.get(e.id)` + `source===` presente.
+
+## 7. Sidebar de sessões: ações por long-press (excluir / renomear / mover)
+
+### 7.1 Objetivo
+
+- Remover o comando `/rename` do popover de slash commands.
+- Na lista lateral de sessões, **segurar (long-press) numa sessão** abre um menu contextual com: **Excluir**, **Renomear**, **Mover**.
+
+### 7.2 Backend disponível (validado)
+
+- `DELETE /session/:id` — excluir (route `index.delete.ts` já existe no portal).
+- Renomear — não há route no portal; o SDK expõe? validar (session.update).
+- Mover — mover entre diretórios? validar disponibilidade do SDK.
+
+### 7.3 UI
+
+- `app-sidebar.tsx` (ou componente da lista de sessões): detectar long-press (pointerdown + timer ~500ms) → abrir menu contextual com as 3 ações.
+- Menu: reutilizar componente de menu existente (menu.tsx) ou popover simples.
+
+### 7.4 Validação pendente (explore)
+
+- Onde a lista de sessões é renderizada (sidebar).
+- Componente de menu contextual disponível.
+- SDK: session.update (rename), mover (se existir).
+
+### 7.5 Teste
+
+- Long-press numa sessão → menu aparece com 3 ações.
+- Excluir → DELETE funciona; Renomear → atualiza título; Mover → (se aplicável).
+
+### 7.6 Validação do backend (explore + testes reais)
+
+- **DELETE** `DELETE /session/:id` — route existe (`index.delete.ts`).
+- **Renomear** — SDK `session.update({sessionID, title})` (PATCH); falta route no portal.
+- **Mover** — `POST /experimental/control-plane/move-session` com `{sessionID, destination: {directory}, moveChanges}`. Validado no backend 1.18.16: funciona, mas **só move para diretórios do MESMO projeto git** (senão: "Destination directory belongs to another project").
+- `/move` da TUI = "Move to another project dir" (session.move) — mesma API.
+
+### 7.7 Plano de implementação
+
+1. Remover `/rename` do `BUILTIN_COMMANDS` (use-commands.ts).
+2. **Renomear**: route `index.patch.ts` (PATCH `/session/:id` → `session.update({sessionID, title})`) + hook `useUpdateSession` + Dialog com TextField.
+3. **Mover**: route `move.ts` (POST `/session/:id/move` → chamada HTTP ao backend `/experimental/control-plane/move-session`) + hook `useMoveSession` + Dialog com input de diretório (mostra aviso de mesma-projeto).
+4. **Long-press na sidebar** (`app-sidebar.tsx`): detectar pointerdown + timer (~500ms) na `SidebarItem` → abrir `Menu` com Excluir / Renomear / Mover.
+5. Manter o kebab existente (Delete) e estender com as mesmas ações.
+6. Teste: long-press → menu; excluir/renomear/mover funcionam.
