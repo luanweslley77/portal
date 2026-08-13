@@ -176,7 +176,11 @@ const fetcher = async (url: string): Promise<SessionMessage[]> => {
     throw new Error("Failed to fetch messages");
   }
   const data = await response.json();
-  return reapplyQueuedMetadata(url, normalizeFetchedMessages(data));
+  const normalized = normalizeFetchedMessages(data);
+  return preserveCompletedState(
+    url,
+    reapplyQueuedMetadata(url, normalized),
+  );
 };
 
 function useBackend() {
@@ -288,6 +292,70 @@ export function reapplyQueuedMetadata(key: string, messages: SessionMessage[]) {
       },
     };
   });
+}
+
+const knownCompletedMessages = new Map<
+  string,
+  Map<string, { completed: number; finish?: string }>
+>();
+
+function preserveCompletedState(
+  key: string,
+  messages: SessionMessage[],
+): SessionMessage[] {
+  let perKey = knownCompletedMessages.get(key);
+  if (!perKey) {
+    perKey = new Map();
+    knownCompletedMessages.set(key, perKey);
+  }
+
+  const next = messages.map((message) => {
+    if (message.type !== "assistant") return message;
+
+    const known = perKey.get(message.id);
+    if (known) {
+      return {
+        ...message,
+        time: { ...message.time, completed: known.completed },
+        ...(known.finish ? { finish: known.finish } : {}),
+      };
+    }
+
+    if (typeof message.time.completed === "number") {
+      perKey.set(message.id, {
+        completed: message.time.completed,
+        finish: message.finish,
+      });
+    }
+    return message;
+  });
+
+  for (const id of perKey.keys()) {
+    if (!next.some((message) => message.id === id)) perKey.delete(id);
+  }
+
+  return next;
+}
+
+export function preserveCompletedForCache(
+  key: string,
+  messages: SessionMessage[],
+) {
+  return preserveCompletedState(key, messages);
+}
+
+export function recordCompletedMessage(
+  key: string,
+  messageId: string,
+  completed: number,
+  finish?: string,
+) {
+  let perKey = knownCompletedMessages.get(key);
+  if (!perKey) {
+    perKey = new Map();
+    knownCompletedMessages.set(key, perKey);
+  }
+  perKey.set(messageId, { completed, finish });
 }
 
 function isMessageWithParts(value: unknown): value is MessageWithParts {

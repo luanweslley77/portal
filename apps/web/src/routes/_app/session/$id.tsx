@@ -880,18 +880,12 @@ function SessionPage() {
   const sending = useMemo(() => {
     const statusActive =
       sessionStatus?.type === "busy" || sessionStatus?.type === "retry";
-    const hasOpenAssistant = sessionMessages.some(
-      (message) =>
-        message.type === "assistant" &&
-        message.time.completed === undefined &&
-        message.content.length > 0,
-    );
     const hasPendingUser = sessionMessages.some(
       (message) =>
         message.type === "user" && message.metadata?.portalPending === true,
     );
 
-    return isSubmitting || statusActive || hasOpenAssistant || hasPendingUser;
+    return isSubmitting || statusActive || hasPendingUser;
   }, [isSubmitting, sessionMessages, sessionStatus?.type]);
 
   const pendingPermissions = useMemo(

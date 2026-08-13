@@ -15,6 +15,7 @@ import type {
 import {
   clearMessageQueued,
   getMessagesKey,
+  recordCompletedMessage,
   sortSessionMessages,
 } from "@/hooks/use-session-messages";
 import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
@@ -353,13 +354,50 @@ function updateLatestTool(
 }
 
 function closeActiveAssistant(messages: SessionMessage[], timestamp: number) {
-  return updateActiveAssistant(messages, (assistant) => ({
-    ...assistant,
-    time: {
-      ...assistant.time,
-      completed: timestamp,
-    },
-  }));
+  return updateActiveAssistant(messages, (assistant) => {
+    const closed = {
+      ...assistant,
+      time: {
+        ...assistant.time,
+        completed: timestamp,
+      },
+    };
+    return closed;
+  });
+}
+
+function closeActiveAssistantAndRecord(
+  messages: SessionMessage[],
+  key: string,
+  timestamp: number,
+) {
+  return updateActiveAssistant(messages, (assistant) => {
+    recordCompletedMessage(key, assistant.id, timestamp, assistant.finish);
+    return {
+      ...assistant,
+      time: {
+        ...assistant.time,
+        completed: timestamp,
+      },
+    };
+  });
+}
+
+function completeActiveAssistant(
+  messages: SessionMessage[],
+  key: string,
+  timestamp: number,
+  updater: (
+    assistant: SessionMessageAssistant,
+  ) => SessionMessageAssistant,
+) {
+  const index = activeAssistantIndex(messages);
+  if (index < 0) return messages;
+  const assistant = messages[index];
+  if (assistant.type !== "assistant") return messages;
+
+  recordCompletedMessage(key, assistant.id, timestamp, assistant.finish);
+  return replaceMessageAt(messages, index, updater(assistant));
 }
 
 function appendAssistantContent(
@@ -534,58 +572,81 @@ function applyEvent(
       });
       break;
 
-    case "session.next.step.started":
+    case "session.next.step.started": {
+      const stepStartedKey = getMessagesKey(
+        port,
+        event.properties.sessionID,
+        provider,
+      );
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        upsertMessage(closeActiveAssistant(items, event.properties.timestamp), {
-          id: event.id,
-          type: "assistant",
-          agent: event.properties.agent,
-          model: event.properties.model,
-          content: [],
-          time: {
-            created: event.properties.timestamp,
+        upsertMessage(
+          closeActiveAssistantAndRecord(
+            items,
+            stepStartedKey,
+            event.properties.timestamp,
+          ),
+          {
+            id: event.id,
+            type: "assistant",
+            agent: event.properties.agent,
+            model: event.properties.model,
+            content: [],
+            time: {
+              created: event.properties.timestamp,
+            },
+            ...(event.properties.snapshot
+              ? { snapshot: { start: event.properties.snapshot } }
+              : {}),
           },
-          ...(event.properties.snapshot
-            ? { snapshot: { start: event.properties.snapshot } }
-            : {}),
-        }),
+        ),
       );
       break;
+    }
 
     case "session.next.step.ended":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => ({
-          ...assistant,
-          finish: event.properties.finish,
-          cost: event.properties.cost,
-          tokens: event.properties.tokens,
-          time: {
-            ...assistant.time,
-            completed: event.properties.timestamp,
-          },
-          ...(event.properties.snapshot
-            ? {
-                snapshot: {
-                  ...(assistant.snapshot ?? {}),
-                  end: event.properties.snapshot,
-                },
-              }
-            : {}),
-        })),
+        completeActiveAssistant(
+          items,
+          getMessagesKey(port, event.properties.sessionID, provider),
+          event.properties.timestamp,
+          (assistant) => ({
+            ...assistant,
+            finish: event.properties.finish,
+            cost: event.properties.cost,
+            tokens: event.properties.tokens,
+            time: {
+              ...assistant.time,
+              completed: event.properties.timestamp,
+            },
+            ...(event.properties.snapshot
+              ? {
+                  snapshot: {
+                    ...(assistant.snapshot ?? {}),
+                    end: event.properties.snapshot,
+                  },
+                }
+              : {}),
+          }),
+        ),
       );
       break;
 
     case "session.next.step.failed":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => ({
-          ...assistant,
-          finish: "error",
-          error: event.properties.error,
-          time: {
-            ...assistant.time,
-            completed: event.properties.timestamp,
-          },
-        })),
+        completeActiveAssistant(
+          items,
+          getMessagesKey(port, event.properties.sessionID, provider),
+          event.properties.timestamp,
+          (assistant) => ({
+            ...assistant,
+            finish: "error",
+            error: event.properties.error,
+            time: {
+              ...assistant.time,
+              completed: event.properties.timestamp,
+            },
+          }),
+        ),
       );
       break;
 
