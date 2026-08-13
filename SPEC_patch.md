@@ -126,3 +126,12 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 - **Verificação final:** footer bottom `843` == wrapper bottom `843`; gap para o viewport `1px`; textarea 44px, selects 44px, espaço abaixo dos selects 4px, footer 109px.
 - **Aprendizado:** ao compensar padding com margem negativa em layout de altura total, `height: 100%` precisa somar o padding compensado — senão sobra espaço no bottom.
 
+### 4.11 Ajuste de layout dos selects (feedback do usuário)
+
+- **Pedido:** agent mais à esquerda; espaço ganho usado para alargar o select de modelo horizontalmente.
+- **Fix:**
+  - Barra de selects: removido `justify-end` → `flex items-center gap-2` (agent no início/esquerda).
+  - `ModelSelect`: `className="w-auto"` → `min-w-0 flex-1`; trigger `w-52` → `w-full` (cresce até a borda direita).
+  - `AgentSelect`: mantém `w-28` (112px) à esquerda.
+- **Verificação (devtools, 390x844):** agent left=13px (112px), model 208→**244px** (right=377), espaços laterais simétricos 12px.
+

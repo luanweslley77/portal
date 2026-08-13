@@ -196,7 +196,7 @@ export function ModelSelect() {
     <Select
       aria-label="Model"
       placeholder={isLoading ? "Loading models..." : "Select a model"}
-      className="w-auto"
+      className="min-w-0 flex-1"
       isDisabled={isLoading || providers.length === 0}
       selectedKey={displayModelKey ?? null}
       onSelectionChange={(key) => {
@@ -206,7 +206,7 @@ export function ModelSelect() {
         }
       }}
     >
-      <SelectTrigger className="w-52" />
+      <SelectTrigger className="w-full" />
       <SelectContent
         items={filteredProviders}
         popover={{ placement: "bottom end" }}

@@ -1313,7 +1313,7 @@ function SessionPage() {
               </Button>
             )}
           </div>
-          <div className="mt-1 flex items-center justify-end gap-2">
+          <div className="mt-1 flex items-center gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
             <ModelSelect />
           </div>
