@@ -896,14 +896,20 @@ export function settleOptimisticMessage(
       const settled = current.map((message) => {
         if (message.id !== messageId || message.type !== "user") return message;
 
-        clearMessageQueued(key, message.text);
+        const wasQueued = message.metadata?.portalQueued === true;
+
+        if (!wasQueued) {
+          clearMessageQueued(key, message.text);
+        }
 
         return {
           ...message,
           metadata: {
             ...(message.metadata ?? {}),
             portalPending: false,
-            portalQueued: false,
+            ...(wasQueued
+              ? { portalQueued: true }
+              : { portalQueued: false }),
           },
         };
       });
