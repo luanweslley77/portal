@@ -45,14 +45,15 @@ export function CommandPopover({
   if (!isOpen || trigger === null) return null;
 
   const textareaRect = textareaRef.current?.getBoundingClientRect();
-  const top = (textareaRect?.top ?? 0) - items.length * 42 - 20;
+  const viewportHeight = window.innerHeight;
+  const bottom = viewportHeight - (textareaRect?.top ?? 0) + 4;
   const left = Math.min(textareaRect?.left ?? 0, window.innerWidth - 280);
 
   const style: React.CSSProperties = {
     position: "fixed",
-    top: Math.max(top, 8),
+    bottom: Math.max(bottom, 8),
     left: Math.max(left, 8),
-    width: Math.min(Math.max(textareaRect?.width ?? 300, 240), 320),
+    width: textareaRect?.width ?? 300,
     zIndex: 50,
   };
 
