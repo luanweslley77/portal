@@ -46,7 +46,7 @@ export function CommandPopover({
 
   const textareaRect = textareaRef.current?.getBoundingClientRect();
   const viewportHeight = window.innerHeight;
-  const bottom = viewportHeight - (textareaRect?.top ?? 0) + 4;
+  const bottom = viewportHeight - (textareaRect?.top ?? 0) + 10;
   const left = Math.min(textareaRect?.left ?? 0, window.innerWidth - 280);
 
   const style: React.CSSProperties = {
@@ -59,7 +59,7 @@ export function CommandPopover({
 
   return (
     <div
-      className="box-border rounded-xl border border-ring/70 bg-bg shadow-2xl overflow-hidden ring-3 ring-ring/20"
+      className="box-border rounded-lg border border-ring/70 bg-bg shadow-2xl overflow-hidden ring-3 ring-ring/20"
       style={style}
     >
       <div className="max-h-56 overflow-y-auto p-1.5 scrollbar-hide">
