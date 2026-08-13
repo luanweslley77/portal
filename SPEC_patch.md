@@ -46,3 +46,29 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 - Tabelas: 316px, sem overflow.
 - Elementos `code` largos (905px) são filhos dos `pre` com scroll interno — comportamento correto.
 
+## 4. Melhoria: footer (composer) compacto
+
+### 4.1 Problema
+
+- O footer do chat (composer) ficava **grande demais**: o `Textarea` tinha `min-h-32 max-h-32` (128px) **sempre**, mesmo com o campo vazio.
+- Somado a `p-4` e `mt-3`, o footer ocupava ~200px+ sem necessidade — especialmente ruim em mobile.
+
+### 4.2 Mudanças
+
+- `session/$id.tsx` footer container: `p-4` → `p-3`.
+- Textarea: altura condicional —
+  - vazio: `min-h-11 max-h-11 pb-2` (~44px, 1 linha);
+  - com conteúdo: `min-h-32 max-h-32 pb-12` (comportamento anterior).
+- Barra de selects (Agent/Model): `mt-3` → `mt-2`.
+
+### 4.3 Verificação
+
+- Vazio: footer ~90px total (antes ~200px).
+- Digitando: textarea cresce (field-sizing-content) até o max-h-32 anterior.
+
+### 4.4 Verificação pós-fix (chrome devtools, 390x844)
+
+- **Campo vazio:** textarea `44px` (min-h-11), footer total `121px` (antes ~200px+).
+- **Digitando (3 linhas):** textarea cresce para `128px` (max-h-32), footer `205px` — comportamento anterior preservado.
+- Selects (Agent/Model) continuam acessíveis na barra compacta (`mt-2`).
+

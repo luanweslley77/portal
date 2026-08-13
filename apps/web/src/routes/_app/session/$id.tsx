@@ -1210,7 +1210,7 @@ function SessionPage() {
         )}
       </div>
 
-      <div className="border-t border-border p-4 shrink-0 relative">
+      <div className="border-t border-border p-3 shrink-0 relative">
         <FileMentionPopover
           isOpen={fileMention.isOpen}
           searchQuery={fileMention.searchQuery}
@@ -1289,7 +1289,7 @@ function SessionPage() {
                 }
               }}
               placeholder="Type your message... (use @ to mention files)"
-              className="min-h-32 max-h-32 w-full resize-none overflow-y-auto pr-14 pb-12"
+              className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-11 max-h-11 pb-2"}`}
               rows={5}
             />
             <Button
@@ -1311,7 +1311,7 @@ function SessionPage() {
               )}
             </Button>
           </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
+          <div className="mt-2 flex items-center justify-end gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
             <ModelSelect />
           </div>
