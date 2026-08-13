@@ -109,3 +109,11 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
   - Barra: `mt-1.5` → `mt-1`.
 - **Verificação (devtools, 390x844):** footer **101px** (era 200px original); textarea 36px, selects 36px; espaços simétricos (13px/12px); botão enviar só com conteúdo.
 
+### 4.9 Correção final (feedback: "o problema é o espaço vazio abaixo dos selects")
+
+- **Usuário esclareceu:** os selects não eram o problema — o espaço vazio **abaixo** deles é que incomodava. Pediu para voltar os selects ao tamanho original.
+- **Fix:**
+  - `AgentSelect` / `ModelSelect`: removido `h-9` → triggers de volta a **44px** (original).
+  - Footer: `p-3` → `p-3 pb-1` → espaço abaixo dos selects: **4px**.
+- **Verificação (devtools, 390x844):** selects 44px, espaço abaixo 4px, textarea vazio 36px, footer **101px**.
+

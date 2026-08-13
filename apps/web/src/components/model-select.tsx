@@ -206,7 +206,7 @@ export function ModelSelect() {
         }
       }}
     >
-      <SelectTrigger className="h-9 w-52" />
+      <SelectTrigger className="w-52" />
       <SelectContent
         items={filteredProviders}
         popover={{ placement: "bottom end" }}
