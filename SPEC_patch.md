@@ -166,8 +166,32 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 
 ### 5.4 Estados do botão de enviar
 
-| Estado                        | Ícone            |
-| ----------------------------- | ---------------- |
-| Ocioso                        | SendIcon         |
-| Agente ocupado (`sending`)    | ListPlusIcon     |
-| Enviando HTTP (`isSubmitting`)| Loader (spinner) |
+| Estado                         | Ícone            |
+| ------------------------------ | ---------------- |
+| Ocioso                         | SendIcon         |
+| Agente ocupado (`sending`)     | ListPlusIcon     |
+| Enviando HTTP (`isSubmitting`) | Loader (spinner) |
+
+## 6. Perf: reatividade em tempo real (sessões grandes)
+
+### 6.1 Problema (feedback do usuário)
+
+- Reatividade caiu muito ao acompanhar a sessão grande (mDNS, **2.7MB**, 627 mensagens / 2193 partes).
+- Causa: `message.part.delta` (SSE) → `revalidateMessagesSoon` (debounce 300ms) → **refetch completo do GET /messages** (2.7MB) + `sortSessionMessages` + re-render de 627 mensagens — ~4 refetches/s durante streaming, mais o polling de 1500ms.
+
+### 6.2 Evidências empíricas
+
+- SSE via portal e backend: deltas a cada **1-2ms** (transporte saudável).
+- GET /messages da sessão grande: **81ms**, 2.7MB; sessões normais: 8-12ms.
+- 30 fetches sequenciais: média 33ms, **pico 784ms**.
+- 14 conexões SSE ativas; `applyEvent` processa eventos de todas as sessões.
+
+### 6.3 Fix
+
+1. **`use-opencode-events.ts`:** `message.part.delta` agora **aplica o delta direto no cache SWR** (`applyPartDelta` — concatena o texto na parte certa, `field === "text"`), sem refetch. Se a mensagem ainda não está no cache (primeiro delta), agenda um refetch de segurança (`schedulePartDeltaFallback`, 2.5s).
+2. **`use-session-messages.ts`:** `legacyAssistantContent` agora preserva o `id` da parte text (necessário para o `applyPartDelta` casar o `partID`); `assistantParts` usa `item.id` quando existe.
+3. **`session/$id.tsx`:** polling de fallback reduzido de **1500ms → 10000ms** (o SSE cobre o streaming; o polling vira só rede de segurança).
+
+### 6.4 Verificação empírica pós-fix
+
+- Sessão grande aberta + subagent explore rodando em paralelo: **apenas 2 GET /messages** (inicial + um eventual), resto são `session/status` leves. Antes: ~4 refetches de 2.7MB por segundo durante streaming.

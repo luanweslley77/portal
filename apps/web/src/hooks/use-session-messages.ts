@@ -323,7 +323,7 @@ function legacyAssistantContent(
 
   message.parts.forEach((part) => {
     if (part.type === "text") {
-      content.push({ type: "text", text: part.text });
+      content.push({ type: "text", id: part.id, text: part.text });
       return;
     }
 
@@ -696,7 +696,7 @@ function assistantParts(
     if (item.type === "text") {
       parts.push(
         textPart(
-          `${message.id}-text-${index}`,
+          item.id ?? `${message.id}-text-${index}`,
           sessionId,
           message.id,
           item.text,

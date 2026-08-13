@@ -202,6 +202,49 @@ function upsertMessage(messages: SessionMessage[], message: SessionMessage) {
   return sortSessionMessages(next);
 }
 
+function applyPartDelta(
+  messages: SessionMessage[],
+  event: Extract<RuntimeEvent, { type: "message.part.delta" }>,
+): SessionMessage[] {
+  const { messageID, partID, field, delta } = event.properties;
+  const index = messages.findIndex((item) => item.id === messageID);
+  if (index < 0) return messages;
+  const message = messages[index];
+  if (message.type !== "assistant") return messages;
+
+  const next = { ...message };
+  const content = (next.content ?? []).map((part) => {
+    if (part.id !== partID || part.type !== "text") return part;
+    if (field !== "text") return part;
+    return { ...part, text: part.text + delta };
+  });
+  if (content === next.content) return messages;
+
+  next.content = content;
+  const updated = [...messages];
+  updated[index] = next;
+  return updated;
+}
+
+const partDeltaFallbackTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
+
+function schedulePartDeltaFallback(
+  port: number,
+  provider: BackendProvider | undefined,
+  sessionID: string,
+) {
+  const key = messageRevalidationKey(port, provider, sessionID);
+  if (partDeltaFallbackTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    partDeltaFallbackTimers.delete(key);
+    revalidateMessages(port, provider, sessionID);
+  }, 2500);
+  partDeltaFallbackTimers.set(key, timer);
+}
+
 function upsertPromptedMessage(
   messages: SessionMessage[],
   key: string,
@@ -867,9 +910,23 @@ function applyEvent(
       revalidateMessagesNow(port, provider, event.properties.sessionID);
       break;
 
-    case "message.part.delta":
-      revalidateMessagesSoon(port, provider, event.properties.sessionID);
+    case "message.part.delta": {
+      let applied = false;
+      mutateMessages(
+        port,
+        provider,
+        event.properties.sessionID,
+        (items) => {
+          const next = applyPartDelta(items, event);
+          if (next !== items) applied = true;
+          return next;
+        },
+      );
+      if (!applied) {
+        schedulePartDeltaFallback(port, provider, event.properties.sessionID);
+      }
       break;
+    }
 
     case "message.removed":
     case "message.part.removed":

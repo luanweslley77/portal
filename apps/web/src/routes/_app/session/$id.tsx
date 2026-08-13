@@ -1135,7 +1135,7 @@ function SessionPage() {
 
     const interval = window.setInterval(() => {
       mutateSessionMessages(port, sessionId, provider);
-    }, 1500);
+    }, 10000);
 
     return () => window.clearInterval(interval);
   }, [port, provider, sending, sessionId]);
