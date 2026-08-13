@@ -1,19 +1,19 @@
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
-import {
-  EllipsisHorizontalIcon,
-  IconGridPlus,
-  TrashIcon,
-} from "@/components/icons/lucide";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { IconGridPlus } from "@/components/icons/lucide";
 import { Button } from "@/components/ui/button";
 import { Keyboard } from "@/components/ui/keyboard";
 import { Link } from "@/components/ui/link";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { SessionActionsMenu } from "@/components/session-actions-menu";
+import { toast } from "@/components/ui/toast";
+import { installReleaseGuards } from "@/lib/long-press";
 import useMediaQuery from "@/hooks/use-media-query";
 import {
   useSessions,
   useCreateSession,
   useDeleteSession,
+  useUpdateSession,
+  useMoveSession,
 } from "@/hooks/use-opencode";
 import type { Session } from "@opencode-ai/sdk/v2";
 
@@ -26,10 +26,14 @@ function truncateTitle(title: string, maxLength = 40): string {
 export default function EmptyState() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
+  const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { isMobile } = useMediaQuery();
   const { data: sessionsData, error, isLoading, mutate } = useSessions();
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
+  const updateSession = useUpdateSession();
+  const moveSession = useMoveSession();
 
   const sessions: Session[] = sessionsData ?? [];
 
@@ -51,9 +55,21 @@ export default function EmptyState() {
     try {
       await deleteSession(sessionId);
       await mutate();
+      toast.success("Session deleted");
     } catch (err) {
       console.error("Failed to delete session:", err);
+      toast.error("Failed to delete session");
     }
+  }
+
+  async function handleRenameSession(sessionId: string, title: string) {
+    await updateSession(sessionId, title);
+    await mutate();
+  }
+
+  async function handleMoveSession(sessionId: string, directory: string) {
+    await moveSession(sessionId, directory);
+    await mutate();
   }
 
   useEffect(() => {
@@ -112,35 +128,57 @@ export default function EmptyState() {
               {sessions.map((session) => (
                 <li
                   key={session.id}
-                  className="group flex items-center justify-between rounded-lg hover:bg-secondary/50 transition-colors"
+                  className="group relative flex items-center rounded-lg hover:bg-secondary/50 transition-colors"
+                  onPointerDownCapture={(e) => {
+                    if (
+                      e.pointerType === "touch" ||
+                      e.pointerType === "pen"
+                    ) {
+                      if (longPressTimer.current) {
+                        clearTimeout(longPressTimer.current);
+                        longPressTimer.current = null;
+                      }
+                      longPressTimer.current = setTimeout(() => {
+                        longPressTimer.current = null;
+                        setMenuSessionId(session.id);
+                        installReleaseGuards();
+                      }, 450);
+                    }
+                  }}
+                  onPointerUpCapture={() => {
+                    if (longPressTimer.current) {
+                      clearTimeout(longPressTimer.current);
+                      longPressTimer.current = null;
+                    }
+                  }}
+                  onPointerCancelCapture={() => {
+                    if (longPressTimer.current) {
+                      clearTimeout(longPressTimer.current);
+                      longPressTimer.current = null;
+                    }
+                  }}
                 >
                   <Link
                     href={`/session/${session.id}`}
-                    className="flex-1 py-2 px-3 text-sm truncate"
+                    className="min-w-0 flex-1 truncate py-2 pl-3 pr-8 text-sm"
                   >
                     {truncateTitle(
                       session.title || `Session ${session.id.slice(0, 8)}`,
                     )}
                   </Link>
-                  <Menu>
-                    <MenuTrigger className="p-2 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity">
-                      <EllipsisHorizontalIcon className="size-4" />
-                    </MenuTrigger>
-                    <MenuContent
-                      popover={{
-                        offset: 0,
-                        placement: "bottom end",
-                      }}
-                    >
-                      <MenuItem
-                        intent="danger"
-                        onAction={() => handleDeleteSession(session.id)}
-                      >
-                        <TrashIcon />
-                        Delete Session
-                      </MenuItem>
-                    </MenuContent>
-                  </Menu>
+                  <SessionActionsMenu
+                    sessionId={session.id}
+                    sessionTitle={
+                      session.title || `Session ${session.id.slice(0, 8)}`
+                    }
+                    isOpen={menuSessionId === session.id}
+                    onOpenChange={(open) =>
+                      setMenuSessionId(open ? session.id : null)
+                    }
+                    onDelete={handleDeleteSession}
+                    onRename={handleRenameSession}
+                    onMove={handleMoveSession}
+                  />
                 </li>
               ))}
             </ul>

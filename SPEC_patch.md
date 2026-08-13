@@ -294,3 +294,32 @@ O openportal roda o nitro de `~/.bun/install/global/node_modules/openportal/web/
 3. `~/.local/bin/portal-auth-patch.sh` (os arquivos patcheados são sobrescritos)
 4. **Reiniciar** o processo (kill + `bunx openportal`; via term-cli se o shell matar no timeout)
 5. Browser: reload com ignoreCache (assets imutáveis ficam em cache)
+
+### Round 2 (relato do usuário no celular real) — bugs + fixes
+Usuário no celular: (a) botão Delete não aparecia; (b) não conseguia tocar em Rename/Move/Delete.
+
+**Diagnóstico reproduzido no devtools (mobile 390x844):**
+- Com o kebab no fim da lista (top 692-756), o card abria em top 760, bottom 887 (> 844): **Rename parcialmente fora, Delete totalmente fora** (top 846). Explica (a) e (b) — o card estourava o viewport vertical e nada era tocável.
+
+**Fixes aplicados:**
+1. **Clamp vertical do card**: `useLayoutEffect` mede a altura real do card; se `trigger.bottom + 4 + cardH > innerHeight - 8`, abre **acima** do trigger (`trigger.top - cardH - 4`, clamp ≥ 8). Posição (top/right) guardada em state.
+2. **Kebab escondido** (pedido do usuário: "retire aqueles '...'"): `opacity-0` por padrão, visível em `pressed`, `group-hover/sidebar-item`, `group-focus-visible` e `group-pressed` (mesmas classes do SidebarMenuTrigger original). No mobile o acesso é via **long-press** (que abre o menu).
+3. `touch-manipulation` no card (remove delay/double-tap-zoom em mobile).
+4. Fix extra: `inputRef` com `useRef<HTMLInputElement>(null!)` (TS limpo nos arquivos da mudança).
+
+### Critérios de aceite (Round 2)
+1. Card SEMPRE dentro do viewport vertical (kebab no topo E no fim da lista).
+2. Delete visível e tocável mesmo com o kebab no fim da lista.
+3. Kebab invisível por padrão; visível no hover (desktop) e durante press.
+4. Long-press continua abrindo o menu sem navegar (mobile).
+
+### Round 2b — reprodução do relato do usuário e guard de pointerup
+Relato (celular real, build anterior): long-press abria o popover com Rename/Move, Delete com espaço em branco, e tocar nas opções "atravessava" para a sessão atrás.
+
+**Causas e correções adicionais:**
+1. **Delete em branco / card estourado** — já corrigido pelo clamp vertical (Round 2a).
+2. **Toque "atravessando"** — o guard de long-press só bloqueava o `click` nativo, mas o `Link` do react-aria completa o press no `pointerup`: soltar o dedo após o long-press navegava (reproduzido: pointerdown/up no item → href mudava). **Fix**: `installReleaseGuards()` (`src/lib/long-press.ts`) registra guards de `pointerup` E `click` em CAPTURE no document (one-shot, 600ms), chamado no fire do timer e no `onContextMenu` (app-sidebar + empty-state). Validado com instrumentação: `item:pointerup` não dispara (guard engole), href permanece `/`, menu abre.
+3. Empty-state (tela principal mobile) alinhado: usa `SessionActionsMenu` + long-press (antes: kebab antigo com "Delete Session" sem confirmação).
+4. `suppressNavRef` removido (morto); indentação corrigida.
+
+**Validação (devtools, teste limpo com instrumentação completa de eventos):** pointerdown (item) → fire 450ms → menu abre → pointerup → NÃO navega (guard captura no document antes do item). E2E Round 6 (general): 11/11 PASS incluindo click real nos itens do menu (dialogs abrem), clamp no fim das duas listas, kebab inerte/oculto, hover desktop.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ModalOverlay,
@@ -39,7 +39,32 @@ export function SessionActionsMenu({
   const [textValue, setTextValue] = useState("");
   const [busy, setBusy] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null!);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen) return;
+    const compute = () => {
+      const trigger = triggerRef.current;
+      const card = cardRef.current;
+      if (!trigger || !card) return;
+      const tr = trigger.getBoundingClientRect();
+      const cardHeight = card.getBoundingClientRect().height;
+      const gap = 4;
+      let top = tr.bottom + gap;
+      if (top + cardHeight > window.innerHeight - 8) {
+        top = Math.max(8, tr.top - cardHeight - gap);
+      }
+      setPosition({
+        top,
+        right: Math.max(window.innerWidth - tr.right + 8, 8),
+      });
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, [isOpen, sessionId]);
 
   useEffect(() => {
     if (mode === "rename") setTextValue(sessionTitle);
@@ -109,7 +134,7 @@ export function SessionActionsMenu({
         type="button"
         aria-label="Session options"
         intent="plain"
-        className="absolute right-0 top-0 z-10 h-full items-center justify-end rounded-none pr-2.5 text-muted-fg hover:text-foreground"
+        className="absolute right-0 top-0 z-10 h-full items-center justify-end rounded-none pr-2.5 text-muted-fg opacity-0 pointer-events-none hover:text-foreground focus-visible:opacity-100 group-hover/sidebar-item:pointer-events-auto group-hover/sidebar-item:opacity-100 group-focus-visible/sidebar-item:pointer-events-auto group-focus-visible/sidebar-item:opacity-100"
         onPress={() => {
           onOpenChange(!isOpen);
         }}
@@ -129,19 +154,13 @@ export function SessionActionsMenu({
               }}
             />
             <div
-              className="fixed z-[55] w-44 rounded-lg border border-border bg-bg p-1 shadow-2xl"
-              style={{
-                top: Math.max(
-                  (triggerRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
-                  8,
-                ),
-                right: Math.max(
-                  window.innerWidth -
-                    (triggerRef.current?.getBoundingClientRect().right ?? 0) +
-                    8,
-                  8,
-                ),
-              }}
+              ref={cardRef}
+              className="fixed z-[55] max-h-[calc(100svh-16px)] w-44 touch-manipulation overflow-y-auto rounded-lg border border-border bg-bg p-1 shadow-2xl"
+              style={
+                position
+                  ? { top: position.top, right: position.right }
+                  : undefined
+              }
             >
               <button
                 type="button"
