@@ -47,7 +47,7 @@ export function AgentSelect({ sessionId }: AgentSelectProps) {
         }
       }}
     >
-      <SelectTrigger className="w-28" />
+      <SelectTrigger className="h-9 w-28" />
       <SelectContent items={agents}>
         {(agent) => (
           <SelectItem id={agent.name} textValue={agent.name}>

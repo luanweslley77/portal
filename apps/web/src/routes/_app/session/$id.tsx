@@ -1289,7 +1289,7 @@ function SessionPage() {
                 }
               }}
               placeholder="Type your message... (use @ to mention files)"
-              className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-11 max-h-11 pb-2"}`}
+              className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-9 max-h-9 pb-1"}`}
               rows={5}
             />
             {input.trim() && (
@@ -1313,7 +1313,7 @@ function SessionPage() {
               </Button>
             )}
           </div>
-          <div className="mt-1.5 flex items-center justify-end gap-2">
+          <div className="mt-1 flex items-center justify-end gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
             <ModelSelect />
           </div>

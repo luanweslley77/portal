@@ -100,3 +100,12 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 - **Fix:** remover o `pb-2` (8px) → footer `p-3` simétrico (12px top e bottom).
 - **Verificação (devtools, 390x844):** espaço acima 13px (12px padding + 1px border) == espaço abaixo 12px; footer **119px**.
 
+### 4.8 Compactação final dos componentes (feedback: "ainda grande")
+
+- **Itens mais pesados:** textarea 44px + triggers dos selects 44px cada (`py-2.5` no mobile).
+- **Fix:**
+  - textarea vazio: `min-h-11` → `min-h-9` (**36px**).
+  - Triggers: `h-9` (**36px**) no `AgentSelect` (`agent-select.tsx`) e `ModelSelect` (`model-select.tsx`).
+  - Barra: `mt-1.5` → `mt-1`.
+- **Verificação (devtools, 390x844):** footer **101px** (era 200px original); textarea 36px, selects 36px; espaços simétricos (13px/12px); botão enviar só com conteúdo.
+
