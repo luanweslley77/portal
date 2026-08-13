@@ -62,6 +62,97 @@ const EMPTY_TOKENS = {
 
 const queuedTexts = new Map<string, Set<string>>();
 
+const legacyConversionCache = new Map<
+  string,
+  Map<string, { source: SessionMessage; legacy: MessageWithParts }>
+>();
+
+function convertSessionMessage(
+  message: SessionMessage,
+  sessionId: string,
+): MessageWithParts | null {
+  switch (message.type) {
+    case "user":
+      return {
+        info: legacyUserInfo(message, sessionId),
+        parts: [
+          textPart(
+            `${message.id}-text`,
+            sessionId,
+            message.id,
+            message.text,
+          ),
+        ],
+        isQueued: message.metadata?.portalQueued === true,
+      };
+
+    case "assistant":
+      return {
+        info: legacyAssistantInfo(message, sessionId),
+        parts: assistantParts(message, sessionId),
+      };
+
+    case "synthetic":
+      return {
+        info: syntheticAssistantInfo(message, sessionId),
+        parts: [
+          textPart(
+            `${message.id}-synthetic`,
+            sessionId,
+            message.id,
+            message.text,
+            true,
+          ),
+        ],
+      };
+
+    case "shell":
+      return {
+        info: shellAssistantInfo(message, sessionId),
+        parts: [shellToolPart(message, sessionId)],
+      };
+
+    case "agent-switched":
+    case "model-switched":
+    case "compaction":
+      return null;
+  }
+}
+
+function sessionMessagesToLegacyCached(
+  cacheKey: string,
+  messages: SessionMessage[],
+  sessionId: string,
+): MessageWithParts[] {
+  let perKey = legacyConversionCache.get(cacheKey);
+  if (!perKey) {
+    perKey = new Map();
+    legacyConversionCache.set(cacheKey, perKey);
+  }
+
+  const seen = new Set<string>();
+  const out: MessageWithParts[] = [];
+  for (const message of messages) {
+    const cached = perKey.get(message.id);
+    if (cached && cached.source === message) {
+      out.push(cached.legacy);
+      seen.add(message.id);
+      continue;
+    }
+    const legacy = convertSessionMessage(message, sessionId);
+    if (!legacy) continue;
+    perKey.set(message.id, { source: message, legacy });
+    out.push(legacy);
+    seen.add(message.id);
+  }
+
+  for (const id of perKey.keys()) {
+    if (!seen.has(id)) perKey.delete(id);
+  }
+
+  return out;
+}
+
 function getQueuedTexts(key: string) {
   let set = queuedTexts.get(key);
   if (!set) {
@@ -117,8 +208,11 @@ export function useSessionMessages(sessionId: string | undefined) {
   });
 
   const messages = useMemo(
-    () => (sessionId ? sessionMessagesToLegacy(data ?? [], sessionId) : []),
-    [data, sessionId],
+    () =>
+      sessionId
+        ? sessionMessagesToLegacyCached(key ?? "", data ?? [], sessionId)
+        : [],
+    [key, data, sessionId],
   );
 
   return {
@@ -728,60 +822,8 @@ export function sessionMessagesToLegacy(
 ): MessageWithParts[] {
   return sortSessionMessages(messages).flatMap(
     (message): MessageWithParts[] => {
-      switch (message.type) {
-        case "user":
-          return [
-            {
-              info: legacyUserInfo(message, sessionId),
-              parts: [
-                textPart(
-                  `${message.id}-text`,
-                  sessionId,
-                  message.id,
-                  message.text,
-                ),
-              ],
-              isQueued: message.metadata?.portalQueued === true,
-            },
-          ];
-
-        case "assistant":
-          return [
-            {
-              info: legacyAssistantInfo(message, sessionId),
-              parts: assistantParts(message, sessionId),
-            },
-          ];
-
-        case "synthetic":
-          return [
-            {
-              info: syntheticAssistantInfo(message, sessionId),
-              parts: [
-                textPart(
-                  `${message.id}-synthetic`,
-                  sessionId,
-                  message.id,
-                  message.text,
-                  true,
-                ),
-              ],
-            },
-          ];
-
-        case "shell":
-          return [
-            {
-              info: shellAssistantInfo(message, sessionId),
-              parts: [shellToolPart(message, sessionId)],
-            },
-          ];
-
-        case "agent-switched":
-        case "model-switched":
-        case "compaction":
-          return [];
-      }
+      const legacy = convertSessionMessage(message, sessionId);
+      return legacy ? [legacy] : [];
     },
   );
 }
