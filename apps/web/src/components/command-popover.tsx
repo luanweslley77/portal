@@ -67,6 +67,7 @@ export function CommandPopover({
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted/50"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onSelect("!")}
           >
             <span className="text-primary font-mono font-bold">!</span>
@@ -89,6 +90,7 @@ export function CommandPopover({
                   ? "bg-primary/10 text-primary-fg"
                   : "hover:bg-muted/50 active:bg-muted/70 text-foreground"
               }`}
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => onSelect(item.value)}
               onMouseEnter={() => onSelectedIndexChange(index)}
             >
