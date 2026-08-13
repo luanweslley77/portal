@@ -81,3 +81,16 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
   - Foco no textarea: barra reaparece (footer 121px) — permite trocar agent/model antes de digitar.
   - Com conteúdo: barra permanece visível.
 
+### 4.6 Correção de rumo (feedback do usuário)
+
+- **Usuário esclareceu:** o pedido era reduzir o espaço **abaixo** da barra de selects — não esconder a barra nem o botão de enviar.
+- **Reversões:**
+  - Barra Agent/Model: **sempre visível** de novo (removida a condição `isComposerFocused`).
+  - Botão de enviar: **só renderiza quando `input.trim()`** — não aparece o ícone vazio/desabilitado à toa.
+- **Redução real do espaço:**
+  - Footer: `p-3` → `p-3 pb-2` → espaço abaixo dos selects: **8px** (era 16px).
+  - Barra de selects: `mt-2` → `mt-1.5`.
+- **Verificação final (devtools, 390x844):**
+  - Footer total **115px** (era ~200px) com textarea 44px + barra 44px.
+  - Espaço abaixo dos selects: 8px; botão enviar oculto quando vazio, visível (40px) ao digitar.
+

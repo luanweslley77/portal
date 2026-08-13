@@ -860,7 +860,6 @@ function SessionPage() {
 
   const [sendError, setSendError] = useState<string | null>(null);
   const [input, setInput] = useState("");
-  const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -1211,7 +1210,7 @@ function SessionPage() {
         )}
       </div>
 
-      <div className="border-t border-border p-3 shrink-0 relative">
+      <div className="border-t border-border p-3 pb-2 shrink-0 relative">
         <FileMentionPopover
           isOpen={fileMention.isOpen}
           searchQuery={fileMention.searchQuery}
@@ -1289,37 +1288,35 @@ function SessionPage() {
                   }
                 }
               }}
-              onFocus={() => setIsComposerFocused(true)}
-              onBlur={() => setIsComposerFocused(false)}
               placeholder="Type your message... (use @ to mention files)"
               className={`w-full resize-none overflow-y-auto pr-14 ${input ? "min-h-32 max-h-32 pb-12" : "min-h-11 max-h-11 pb-2"}`}
               rows={5}
             />
-            <Button
-              type="submit"
-              isDisabled={!input.trim() || sending}
-              isCircle
-              size="sq-sm"
-              aria-label={sending ? "Sending message" : "Send message"}
-              className="absolute right-3 bottom-3"
-            >
-              {sending ? (
-                <span className="grid size-4 place-items-center">
-                  <Loader className="size-4" aria-label="Sending message" />
-                </span>
-              ) : (
-                <span className="grid size-4 place-items-center">
-                  <SendIcon size="16px" />
-                </span>
-              )}
-            </Button>
+            {input.trim() && (
+              <Button
+                type="submit"
+                isDisabled={!input.trim() || sending}
+                isCircle
+                size="sq-sm"
+                aria-label={sending ? "Sending message" : "Send message"}
+                className="absolute right-3 bottom-3"
+              >
+                {sending ? (
+                  <span className="grid size-4 place-items-center">
+                    <Loader className="size-4" aria-label="Sending message" />
+                  </span>
+                ) : (
+                  <span className="grid size-4 place-items-center">
+                    <SendIcon size="16px" />
+                  </span>
+                )}
+              </Button>
+            )}
           </div>
-          {input.trim() || isComposerFocused ? (
-            <div className="mt-2 flex items-center justify-end gap-2">
-              {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
-              <ModelSelect />
-            </div>
-          ) : null}
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
+            <ModelSelect />
+          </div>
         </form>
       </div>
     </div>
