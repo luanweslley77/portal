@@ -14,6 +14,9 @@ import {
   FileMentionPopover,
   useFileMention,
 } from "@/components/file-mention-popover";
+import { CommandPopover } from "@/components/command-popover";
+import { useSlashCommand } from "@/hooks/use-slash-command";
+import { useCommands } from "@/hooks/use-commands";
 import {
   IconBadgeSparkle,
   IconEye,
@@ -871,6 +874,8 @@ function SessionPage() {
   const isNearBottomRef = useRef(true);
   const prevMessagesLengthRef = useRef(0);
   const fileMention = useFileMention();
+  const slashCommand = useSlashCommand();
+  const { commands } = useCommands();
 
   const messagesLoadError = messagesError?.message;
 
@@ -1088,6 +1093,64 @@ function SessionPage() {
     setInput("");
     setSendError(null);
 
+    const isShellCommand = messageText.startsWith("!");
+    const isSlashCommand =
+      messageText.startsWith("/") && commands.some((command) => {
+        const firstLine = messageText.split("\n")[0];
+        const [name] = firstLine.split(" ");
+        return command.name === name.slice(1);
+      });
+
+    if (isShellCommand || isSlashCommand) {
+      void (async () => {
+        try {
+          const [firstLine, ...restLines] = messageText.split("\n");
+          const [, ...firstLineArgs] = firstLine.split(" ");
+          const args =
+            firstLineArgs.join(" ") +
+            (restLines.length > 0 ? "\n" + restLines.join("\n") : "");
+
+          const url = isShellCommand
+            ? `${apiBase}/session/${sessionId}/shell`
+            : `${apiBase}/session/${sessionId}/command`;
+          const body = isShellCommand
+            ? { messageID: messageId, command: firstLine.slice(1) }
+            : {
+                messageID: messageId,
+                command: firstLine.split(" ")[0].slice(1),
+                arguments: args,
+              };
+
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) {
+            const fallback = `Failed to run command (${response.status}${
+              response.statusText ? ` ${response.statusText}` : ""
+            })`;
+            throw new Error(await getResponseErrorMessage(response, fallback));
+          }
+        } catch (err) {
+          setSendError(
+            err instanceof Error ? err.message : "Failed to run command",
+          );
+        } finally {
+          submitLockRef.current = false;
+          setIsSubmitting(false);
+          mutateSessionMessages(port, sessionId, provider);
+          mutateSessionStatuses();
+          mutateSessions();
+        }
+      })();
+
+      isNearBottomRef.current = true;
+      scrollToBottom();
+      return;
+    }
+
     const optimisticMessage: MessageWithParts = {
       info: {
         id: messageId,
@@ -1215,6 +1278,20 @@ function SessionPage() {
             setInput(newValue);
           }}
         />
+        <CommandPopover
+          isOpen={slashCommand.isOpen}
+          trigger={slashCommand.trigger}
+          searchQuery={slashCommand.searchQuery}
+          selectedIndex={slashCommand.selectedIndex}
+          commands={commands}
+          textareaRef={textareaRef}
+          onClose={slashCommand.close}
+          onSelectedIndexChange={slashCommand.setSelectedIndex}
+          onSelect={(value) => {
+            const newValue = slashCommand.handleSelect(value, input);
+            setInput(newValue);
+          }}
+        />
         <form onSubmit={handleSubmit} className="w-full">
           {sendError && (
             <ChatErrorAlert
@@ -1230,16 +1307,18 @@ function SessionPage() {
               onChange={(e) => {
                 const value = e.target.value;
                 setInput(value);
+                const cursorPos = e.target.selectionStart ?? value.length;
+                slashCommand.handleInputChange(value, cursorPos, commands);
                 if (fileMention.isOpen || value.includes("@")) {
-                  const cursorPos = e.target.selectionStart ?? value.length;
                   fileMention.handleInputChange(value, cursorPos);
                 }
               }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
                 const value = target.value;
+                const cursorPos = target.selectionStart ?? value.length;
+                slashCommand.handleInputChange(value, cursorPos, commands);
                 if (value.includes("@")) {
-                  const cursorPos = target.selectionStart ?? value.length;
                   fileMention.handleInputChange(value, cursorPos);
                 }
               }}
@@ -1251,6 +1330,54 @@ function SessionPage() {
                 }
               }}
               onKeyDown={(e) => {
+                const handledSlash = slashCommand.handleKeyDown(
+                  e,
+                  slashCommand.trigger === "slash"
+                    ? commands.filter(
+                        (command) =>
+                          command.name
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()) ||
+                          (command.description ?? "")
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()),
+                      ).length
+                    : 1,
+                );
+                if (handledSlash) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    slashCommand.isOpen
+                  ) {
+                    const list =
+                      slashCommand.trigger === "slash"
+                        ? commands.filter(
+                            (command) =>
+                              command.name
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ) ||
+                              (command.description ?? "")
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ),
+                          )
+                        : [{ name: "" }];
+                    const selected = list[slashCommand.selectedIndex];
+                    if (selected) {
+                      const newValue = slashCommand.handleSelect(
+                        slashCommand.trigger === "bang"
+                          ? "!"
+                          : `/${selected.name}`,
+                        input,
+                      );
+                      setInput(newValue);
+                    }
+                  }
+                  return;
+                }
                 const handled = fileMention.handleKeyDown(
                   e,
                   fileResults.length,
@@ -1279,7 +1406,7 @@ function SessionPage() {
                 }
               }}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full resize-none pr-14 ${input ? "min-h-32 max-h-32 overflow-y-auto pb-12" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
+              className={`w-full resize-none pr-14 ${input ? "min-h-12 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
               rows={5}
             />
             {input.trim() && (
@@ -1295,7 +1422,7 @@ function SessionPage() {
                       ? "Queue message"
                       : "Send message"
                 }
-                className="absolute right-3 bottom-3"
+                className="absolute right-2 bottom-2"
               >
                 {isSubmitting ? (
                   <span className="grid size-4 place-items-center">

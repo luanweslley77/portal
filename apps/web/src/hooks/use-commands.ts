@@ -1,0 +1,38 @@
+import useSWR from "swr";
+import { useInstanceStore } from "@/stores/instance-store";
+import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
+
+export interface SlashCommand {
+  name: string;
+  description?: string;
+  source?: string;
+}
+
+const fetcher = async (url: string): Promise<SlashCommand[]> => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch commands: ${res.status}`);
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
+};
+
+function useBackend() {
+  const instance = useInstanceStore((s) => s.instance);
+  return instance
+    ? {
+        port: instance.port,
+        provider: instance.provider,
+        basePath: backendBasePath(instance.provider, instance.port),
+      }
+    : null;
+}
+
+export function useCommands() {
+  const backend = useBackend();
+  const key = backend ? `${backend.basePath}/command` : null;
+
+  const { data, error, isLoading } = useSWR<SlashCommand[]>(key, fetcher, {
+    revalidateOnFocus: false,
+  });
+
+  return { commands: data ?? [], error, isLoading };
+}
