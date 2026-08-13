@@ -9,7 +9,7 @@ import {
   ShieldCheckIcon,
 } from "@/components/icons/lucide";
 import { ProviderIcon } from "@/components/icons/provider-icon";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { parsePatchFiles } from "@pierre/diffs";
 import { Avatar } from "@/components/ui/avatar";
 import {
@@ -187,6 +187,8 @@ export default function AppSidebar(
 ) {
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressNavRef = useRef(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
   const { data: hostnameData } = useHostname();
@@ -296,18 +298,52 @@ export default function AppSidebar(
 
           <SidebarSection label="Sessions">
             {sessions.map((session) => (
-              <SidebarItem
+              <div
                 key={session.id}
-                tooltip={session.title}
-                onLongPress={() => {
-                  setMenuSessionId(session.id);
-                }}
-                onPress={(e) => {
-                  if (menuSessionId) {
-                    e.preventDefault();
-                    e.stopPropagation();
+                className="col-span-full min-w-0"
+                onPointerDownCapture={(e) => {
+                  if (
+                    e.pointerType === "touch" ||
+                    e.pointerType === "pen"
+                  ) {
+                    if (longPressTimer.current) {
+                      clearTimeout(longPressTimer.current);
+                      longPressTimer.current = null;
+                    }
+                    longPressTimer.current = setTimeout(() => {
+                      longPressTimer.current = null;
+                      suppressNavRef.current = true;
+                      setMenuSessionId(session.id);
+                      const guard = (ev: MouseEvent) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        suppressNavRef.current = false;
+                        document.removeEventListener("click", guard, true);
+                      };
+                      document.addEventListener("click", guard, true);
+                      setTimeout(
+                        () =>
+                          document.removeEventListener("click", guard, true),
+                        600,
+                      );
+                    }, 450);
                   }
                 }}
+                onPointerUpCapture={() => {
+                  if (longPressTimer.current) {
+                    clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                  }
+                }}
+                onPointerCancelCapture={() => {
+                  if (longPressTimer.current) {
+                    clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                  }
+                }}
+              >
+              <SidebarItem
+                tooltip={session.title}
                 onContextMenu={(e) => {
                   e.preventDefault();
                   setMenuSessionId(session.id);
@@ -334,6 +370,7 @@ export default function AppSidebar(
                   </>
                 )}
               </SidebarItem>
+              </div>
             ))}
           </SidebarSection>
         </SidebarSectionGroup>

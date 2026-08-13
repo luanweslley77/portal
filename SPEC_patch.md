@@ -246,3 +246,51 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 4. **Long-press na sidebar** (`app-sidebar.tsx`): detectar pointerdown + timer (~500ms) na `SidebarItem` → abrir `Menu` com Excluir / Renomear / Mover.
 5. Manter o kebab existente (Delete) e estender com as mesmas ações.
 6. Teste: long-press → menu; excluir/renomear/mover funcionam.
+
+## 8. SPEC — Fix: menu de ações da sidebar (Rename/Move/Delete) no mobile
+
+### Problema (observado em devtools, viewport mobile 390x844, touch)
+1. **Menu não abria / clicava navegava**: o gatilho era `<button>` nativo dentro do `SidebarItem` (Link react-aria). O press do Link capturava o gesto e navegava para a sessão.
+   - **Fix aplicado**: gatilho virou `Button` do projeto (`react-aria-components`), com `onPress={(e) => { e.preventDefault(); e.stopPropagation(); onOpenChange(!isOpen); }}`. O botão interno reivindica o press e o Link não navega. **Validado**: clique real → `url` permanece `/` e o menu abre.
+2. **Menu fora da tela (left: -230 em viewport 390)**: o menu usa `position: fixed` com `top`/`right` calculados via `getBoundingClientRect()`. O `right` inline calculado era `350px` (correto), mas o rect real era `right: -54` → o menu foi posicionado **relativo ao sheet da sidebar mobile** (dialog com `transform`/animação), que vira o *containing block* do `fixed`. O overlay `fixed inset-0` também ficava limitado ao sheet (não cobria a tela).
+   - **Fix proposto**: renderizar overlay + menu via `createPortal(..., document.body)` → o `fixed` resolve contra a viewport real, independente de transforms ancestrais.
+
+### Decisões de design
+- Portar APENAS o overlay e o card do menu (os `ModalOverlay` dos dialogs já usam react-aria, que faz portal internamente).
+- Manter posicionamento right-aligned (`right: innerWidth - trigger.right + 8`), com clamp ≥ 8px.
+- Calcular `top`/`right` no momento do render via `triggerRef.current?.getBoundingClientRect()`. Como o portal monta junto do `isOpen`, o ref já está setado (o botão existe na sidebar).
+- Recálculo em resize/scroll não é necessário para esta versão (menu efêmero; overlay fecha no mousedown/touchstart).
+
+### Arquivos afetados
+- `apps/web/src/components/session-actions-menu.tsx` — portal + gatilho Button (já feito).
+
+### Critérios de aceite (E2E, viewport mobile 390x844 touch)
+1. Abrir sidebar → clicar ⋯ → menu aparece **dentro do viewport** (left ≥ 0, right ≤ 390) sem navegar.
+2. Overlay cobre a tela toda (fecha no toque fora).
+3. Clicar Rename → dialog com input preenchido com o título; Rename → toast "Session renamed".
+4. Clicar Move → dialog; Move → toast ou erro amigável (mesma-projeto).
+5. Clicar Delete → confirm dialog → sessão removida da lista.
+6. Desktop (≥1024): kebab abre menu à direita do item sem quebrar layout.
+
+### Validação do explore (achados) e correções aplicadas
+1. `PressEvent` do react-aria 3.48 não declara `preventDefault`/`stopPropagation` nos tipos (TS2339; runtime aceita, mas tsc falha) → **removidas as chamadas** (o react-aria já para a propagação por padrão; o press do kebab nunca vaza para o Link). tsc limpo para os arquivos da mudança.
+2. `onLongPress` não existe nos tipos (TS2322) → **long-press reimplementado** com `onPointerDownCapture`/`onPointerUpCapture`/`onPointerCancelCapture` num wrapper `<div>` no map da sessão + timer 450ms + guard de click (previne navegação fantasma no touchend pós-long-press). `onContextMenu` mantido (desktop + Android).
+3. Guarda `onPress` no SidebarItem era código morto + TS2339 → **removida**.
+4. Touch dismiss via overlay pode navegar para a sessão sob o dedo (click compat pós-touchstart) → `suppressNextClick()` (guard capture de 600ms) chamado no `onTouchStart` do overlay.
+5. Kebab auto-placed na linha 2 à esquerda do grid → **posicionado como o SidebarMenuTrigger**: `absolute right-0 top-0 z-10 h-full items-center justify-end pr-2.5` (o Link do SidebarItem é `relative`).
+6. Sem fechar no scroll (SidebarContent overflow-auto) → listener `scroll` capture fecha o menu quando aberto.
+7. Portal `createPortal(document.body)` mantido (fix do containing block do sheet).
+8. `onPointerLeaveCapture` não existe nos tipos do React 19 → removido (sem efeito no touch).
+
+### Resultado E2E (Round 4, bundle final index-B8j5NEFm/_app-DIJ8ZA02)
+- Mobile 390x844: kebab à direita (l241 r280, sheet 8..296) ✓; click real abre menu sem navegar ✓; card z-[55] dentro do viewport (96..272) ✓; dismiss touch fecha sem navegar ✓; long-press 450ms abre sem navegar ✓; dialog Rename com input ✓ (Round 3).
+- Desktop 1280: kebab à direita do item (328..368) ✓; card dentro (184..360) ✓; click fora (mousedown real) fecha ✓; scroll fecha ✓ (Round 3).
+- Loop completo: explore validou → ajustes (PressEvent sem preventDefault, long-press via pointerdown capture, kebab absolute, col-span-full no wrapper, guard de click, close on scroll, portal) → general E2E 3 rounds (rounds 1-2 invalidados por servidor servindo build antigo) → Round 4 PASS.
+
+### Lição de deploy (IMPORTANTE)
+O openportal roda o nitro de `~/.bun/install/global/node_modules/openportal/web/server/` (NÃO da raiz). Deploy correto:
+1. `bun run build` em `apps/web`
+2. `cp -r .output/server/. web/server/` e `cp -r .output/public/assets/* web/public/assets/`
+3. `~/.local/bin/portal-auth-patch.sh` (os arquivos patcheados são sobrescritos)
+4. **Reiniciar** o processo (kill + `bunx openportal`; via term-cli se o shell matar no timeout)
+5. Browser: reload com ignoreCache (assets imutáveis ficam em cache)

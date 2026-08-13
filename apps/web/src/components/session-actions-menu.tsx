@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ModalOverlay,
   Modal,
@@ -71,6 +72,31 @@ export function SessionActionsMenu({
     onDelete(sessionId);
   };
 
+  const suppressClickRef = useRef(false);
+
+  const suppressNextClick = () => {
+    suppressClickRef.current = true;
+    const guard = (e: MouseEvent) => {
+      if (!suppressClickRef.current) return;
+      suppressClickRef.current = false;
+      e.preventDefault();
+      e.stopPropagation();
+      document.removeEventListener("click", guard, true);
+    };
+    document.addEventListener("click", guard, true);
+    setTimeout(() => {
+      suppressClickRef.current = false;
+      document.removeEventListener("click", guard, true);
+    }, 600);
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onScroll = () => onOpenChange(false);
+    document.addEventListener("scroll", onScroll, true);
+    return () => document.removeEventListener("scroll", onScroll, true);
+  }, [isOpen, onOpenChange]);
+
   const modalClass =
     "fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4";
   const dialogClass =
@@ -78,37 +104,41 @@ export function SessionActionsMenu({
 
   return (
     <>
-      <button
+      <Button
         ref={triggerRef}
         type="button"
         aria-label="Session options"
-        className="rounded-md p-1 text-muted-fg hover:text-foreground"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
+        intent="plain"
+        className="absolute right-0 top-0 z-10 h-full items-center justify-end rounded-none pr-2.5 text-muted-fg hover:text-foreground"
+        onPress={() => {
           onOpenChange(!isOpen);
         }}
       >
         <EllipsisHorizontalIcon />
-      </button>
+      </Button>
 
-      {isOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-50"
-            onMouseDown={() => onOpenChange(false)}
-            onTouchStart={() => onOpenChange(false)}
-          />
-          {triggerRef.current && (
+      {isOpen &&
+        createPortal(
+          <>
+            <div
+              className="fixed inset-0 z-50"
+              onMouseDown={() => onOpenChange(false)}
+              onTouchStart={() => {
+                onOpenChange(false);
+                suppressNextClick();
+              }}
+            />
             <div
               className="fixed z-[55] w-44 rounded-lg border border-border bg-bg p-1 shadow-2xl"
               style={{
                 top: Math.max(
-                  triggerRef.current.getBoundingClientRect().bottom + 4,
+                  (triggerRef.current?.getBoundingClientRect().bottom ?? 0) + 4,
                   8,
                 ),
-                left: Math.max(
-                  triggerRef.current.getBoundingClientRect().left - 40,
+                right: Math.max(
+                  window.innerWidth -
+                    (triggerRef.current?.getBoundingClientRect().right ?? 0) +
+                    8,
                   8,
                 ),
               }}
@@ -148,9 +178,9 @@ export function SessionActionsMenu({
                 <span className="min-w-0 flex-1">Delete</span>
               </button>
             </div>
-          )}
-        </>
-      )}
+          </>,
+          document.body,
+        )}
 
       {mode === "rename" && (
         <ModalOverlay
