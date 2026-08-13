@@ -59,16 +59,15 @@ export function CommandPopover({
 
   return (
     <div
-      className="rounded-xl border border-border bg-bg shadow-2xl overflow-hidden"
+      className="box-border rounded-xl border border-ring/70 bg-bg shadow-2xl overflow-hidden ring-3 ring-ring/20"
       style={style}
     >
-      <div className="max-h-56 overflow-y-auto p-1.5">
+      <div className="max-h-56 overflow-y-auto p-1.5 scrollbar-hide">
         {trigger === "bang" && (
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-muted/50"
             onClick={() => onSelect("!")}
-            onTouchEnd={() => onSelect("!")}
           >
             <span className="text-primary font-mono font-bold">!</span>
             <span className="flex flex-col min-w-0 flex-1">
@@ -91,7 +90,6 @@ export function CommandPopover({
                   : "hover:bg-muted/50 active:bg-muted/70 text-foreground"
               }`}
               onClick={() => onSelect(item.value)}
-              onTouchEnd={() => onSelect(item.value)}
               onMouseEnter={() => onSelectedIndexChange(index)}
             >
               <span
