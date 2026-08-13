@@ -190,7 +190,7 @@ Documento vivo da investigação/correção. Atualizado conforme descobertas.
 
 1. **`use-opencode-events.ts`:** `message.part.delta` agora **aplica o delta direto no cache SWR** (`applyPartDelta` — concatena o texto na parte certa, `field === "text"`), sem refetch. Se a mensagem ainda não está no cache (primeiro delta), agenda um refetch de segurança (`schedulePartDeltaFallback`, 2.5s).
 2. **`use-session-messages.ts`:** `legacyAssistantContent` agora preserva o `id` da parte text (necessário para o `applyPartDelta` casar o `partID`); `assistantParts` usa `item.id` quando existe.
-3. **`session/$id.tsx`:** polling de fallback reduzido de **1500ms → 10000ms** (o SSE cobre o streaming; o polling vira só rede de segurança).
+3. **`session/$id.tsx`:** intervalo do polling de fallback **aumentado** de 1500ms → 10000ms (frequência de refetch reduzida ~6.7x; o SSE cobre o streaming; o polling vira só rede de segurança).
 
 ### 6.4 Verificação empírica pós-fix
 
