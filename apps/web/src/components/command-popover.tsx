@@ -1,6 +1,12 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import type { SlashCommand } from "@/hooks/use-commands";
 import type { TriggerType } from "@/hooks/use-slash-command";
+
+interface PopoverPosition {
+  bottom: number;
+  left: number;
+  width: number;
+}
 
 interface CommandPopoverProps {
   isOpen: boolean;
@@ -25,6 +31,36 @@ export function CommandPopover({
   onSelect,
   onSelectedIndexChange,
 }: CommandPopoverProps) {
+  const [position, setPosition] = useState<PopoverPosition | null>(null);
+
+  useLayoutEffect(() => {
+    if (!isOpen || trigger === null) return;
+    const compute = () => {
+      const textareaRect = textareaRef.current?.getBoundingClientRect();
+      if (!textareaRect) return;
+      setPosition({
+        bottom: Math.max(window.innerHeight - textareaRect.top + 10, 8),
+        left: Math.max(
+          Math.min(textareaRect.left, window.innerWidth - 280),
+          8,
+        ),
+        width: textareaRect.width,
+      });
+    };
+    compute();
+    const visualViewport = window.visualViewport;
+    window.addEventListener("resize", compute);
+    visualViewport?.addEventListener("resize", compute);
+    visualViewport?.addEventListener("scroll", compute);
+    document.addEventListener("scroll", compute, true);
+    return () => {
+      window.removeEventListener("resize", compute);
+      visualViewport?.removeEventListener("resize", compute);
+      visualViewport?.removeEventListener("scroll", compute);
+      document.removeEventListener("scroll", compute, true);
+    };
+  }, [isOpen, trigger, textareaRef]);
+
   const filtered = useMemo(() => {
     const query = searchQuery.toLowerCase();
     if (trigger === "slash") {
@@ -44,18 +80,15 @@ export function CommandPopover({
 
   if (!isOpen || trigger === null) return null;
 
-  const textareaRect = textareaRef.current?.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
-  const bottom = viewportHeight - (textareaRect?.top ?? 0) + 10;
-  const left = Math.min(textareaRect?.left ?? 0, window.innerWidth - 280);
-
-  const style: React.CSSProperties = {
-    position: "fixed",
-    bottom: Math.max(bottom, 8),
-    left: Math.max(left, 8),
-    width: textareaRect?.width ?? 300,
-    zIndex: 50,
-  };
+  const style: React.CSSProperties | undefined = position
+    ? {
+        position: "fixed",
+        bottom: position.bottom,
+        left: position.left,
+        width: position.width,
+        zIndex: 50,
+      }
+    : undefined;
 
   return (
     <div

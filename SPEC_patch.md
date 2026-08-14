@@ -343,3 +343,15 @@ O código acumulou 3 camadas de mitigação manual (timers de long-press + guard
 2. `app-sidebar` e `empty-state`: estado `dialogOpen`; `onContextMenu` dos itens retorna **antes** do `preventDefault` quando `dialogOpen` — o toque longo no input do dialog não abre o menu de sessão nem suprime o menu nativo de texto.
 
 **Validação (devtools):** menu abre por long-press ✓; dialog abre e menu fecha (`role="menu"` ausente) ✓; com dialog aberto, contextmenu no input → `defaultPrevented: false` + nenhum menu de sessão + dialog permanece ✓; long-press volta a funcionar após Cancel ✓.
+
+### Round 5 — popover de comandos re-posiciona com o teclado virtual
+**Relato**: ao digitar "/" do zero (sem foco), o popover nascia numa posição/espaçamento errado no celular; ao digitar "x" (re-render), ele recalcularia e ficava correto — queria que já nascesse correto.
+
+**Causa**: CommandPopover calculava a posição uma única vez no render com `window.innerHeight`. No mobile, ao digitar "/", o popover montava enquanto o teclado ainda abria/reposicionava o textarea → posição errada e TRAVADA até o próximo input.
+
+**Fix** (`command-popover.tsx` + `file-mention-popover.tsx`):
+1. Posição movida para `useState` + `useLayoutEffect` com `compute()` (bottom = innerHeight - textareaRect.top + 10, clamps iguais).
+2. Listeners de re-cálculo: `window resize`, `visualViewport resize`/`scroll` (o teclado abre/fecha), `document scroll` (capture) — o popover re-posiciona sempre que o layout muda.
+3. FileMentionPopover (desktop fixed): mesmo tratamento no effect de coords (mobile já usa absolute bottom-full e segue o composer).
+
+**Validação (devtools)**: com o popover aberto, mudança de viewport (390x600 simulando teclado) → popover re-posicionou automaticamente (top 499→255), mantendo gap de 10px acima do textarea. tsc limpo (3 pré-existentes nos hooks).
