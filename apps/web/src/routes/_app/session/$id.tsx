@@ -905,6 +905,7 @@ function SessionPage() {
 
   const [sendError, setSendError] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [wrapped, setWrapped] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -919,6 +920,17 @@ function SessionPage() {
   const fileMention = useFileMention();
   const slashCommand = useSlashCommand();
   const { commands } = useCommands();
+
+  useEffect(() => {
+    const t = textareaRef.current;
+    if (!t) return;
+    const cs = getComputedStyle(t);
+    const linhas = Math.round(
+      (t.scrollHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)) /
+        parseFloat(cs.lineHeight),
+    );
+    setWrapped(linhas > 1);
+  }, [input]);
 
   const messagesLoadError = messagesError?.message;
 
@@ -1451,7 +1463,7 @@ function SessionPage() {
             </div>
           )}
           <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
-            <div className={`max-h-60 overflow-y-auto scroll-pb-2 ${input.includes("\n") ? "pb-12" : "pb-0"}`}>
+            <div className={`max-h-60 overflow-y-auto scroll-pb-2 ${wrapped ? "pb-12" : "pb-0"}`}>
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1558,7 +1570,7 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${input.includes("\n") ? "min-h-14 py-2 pl-0!" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
               rows={5}
             />
             </div>
