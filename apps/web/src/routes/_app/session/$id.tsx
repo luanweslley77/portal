@@ -1557,20 +1557,18 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full resize-none pr-14 pl-10 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
+              className={`w-full resize-none pr-14 pl-12 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
               rows={5}
             />
-            <Button
+            <button
               type="button"
-              intent="plain"
-              size="sq-sm"
-              isCircle
               aria-label="Attach files"
-              className="absolute left-1.5 bottom-1 text-muted-fg hover:text-foreground"
-              onPress={() => fileInputRef.current?.click()}
+              className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => fileInputRef.current?.click()}
             >
               <PaperclipIcon />
-            </Button>
+            </button>
             <input
               ref={fileInputRef}
               type="file"
