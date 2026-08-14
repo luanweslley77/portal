@@ -187,6 +187,7 @@ export default function AppSidebar(
 ) {
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
   const { data: hostnameData } = useHostname();
@@ -300,6 +301,7 @@ export default function AppSidebar(
                 key={session.id}
                 tooltip={session.title}
                 onContextMenu={(e) => {
+                  if (dialogOpen) return;
                   e.preventDefault();
                   setMenuSessionId(session.id);
                 }}
@@ -321,6 +323,7 @@ export default function AppSidebar(
                       onDelete={handleDeleteSession}
                       onRename={handleRenameSession}
                       onMove={handleMoveSession}
+                      onDialogOpenChange={setDialogOpen}
                     />
                   </>
                 )}

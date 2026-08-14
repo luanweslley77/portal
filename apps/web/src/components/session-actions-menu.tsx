@@ -31,6 +31,7 @@ interface SessionActionsMenuProps {
   onDelete: (sessionId: string) => void;
   onRename: (sessionId: string, title: string) => Promise<void>;
   onMove: (sessionId: string, directory: string) => Promise<void>;
+  onDialogOpenChange?: (open: boolean) => void;
 }
 
 export function SessionActionsMenu({
@@ -41,11 +42,16 @@ export function SessionActionsMenu({
   onDelete,
   onRename,
   onMove,
+  onDialogOpenChange,
 }: SessionActionsMenuProps) {
   const [mode, setMode] = useState<"rename" | "move" | "delete" | null>(null);
   const [textValue, setTextValue] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null!);
+
+  useEffect(() => {
+    onDialogOpenChange?.(mode !== null);
+  }, [mode, onDialogOpenChange]);
 
   useEffect(() => {
     if (mode === "rename") setTextValue(sessionTitle);
@@ -95,14 +101,20 @@ export function SessionActionsMenu({
         <MenuContent popover={{ placement: "bottom end" }} className="w-44">
           <MenuItem
             textValue="Rename"
-            onAction={() => setMode("rename")}
+            onAction={() => {
+              onOpenChange(false);
+              setMode("rename");
+            }}
           >
             <PencilLineIcon />
             Rename
           </MenuItem>
           <MenuItem
             textValue="Move"
-            onAction={() => setMode("move")}
+            onAction={() => {
+              onOpenChange(false);
+              setMode("move");
+            }}
           >
             <FolderInputIcon />
             Move
@@ -111,7 +123,10 @@ export function SessionActionsMenu({
           <MenuItem
             textValue="Delete"
             intent="danger"
-            onAction={() => setMode("delete")}
+            onAction={() => {
+              onOpenChange(false);
+              setMode("delete");
+            }}
           >
             <TrashIcon />
             Delete

@@ -26,6 +26,7 @@ export default function EmptyState() {
   const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const { isMobile } = useMediaQuery();
   const { data: sessionsData, error, isLoading, mutate } = useSessions();
   const createSession = useCreateSession();
@@ -128,6 +129,7 @@ export default function EmptyState() {
                   key={session.id}
                   className="group relative flex items-center rounded-lg hover:bg-secondary/50 transition-colors"
                   onContextMenu={(e) => {
+                    if (dialogOpen) return;
                     e.preventDefault();
                     setMenuSessionId(session.id);
                   }}
@@ -152,6 +154,7 @@ export default function EmptyState() {
                     onDelete={handleDeleteSession}
                     onRename={handleRenameSession}
                     onMove={handleMoveSession}
+                    onDialogOpenChange={setDialogOpen}
                   />
                 </li>
               ))}

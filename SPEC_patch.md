@@ -334,3 +334,12 @@ O código acumulou 3 camadas de mitigação manual (timers de long-press + guard
 4. `lib/long-press.ts`: DELETADO.
 
 **Resultado E2E (Round 7, general): 8/8 PASS** — contexto abre menu sem navegar (href "/"), menu dentro do viewport, flip no fim da lista (Delete visível), toque real em Rename/Move/Delete abre dialogs, dismiss sem navegar, kebab inerte no mobile (opacity 0 / pointer-events none) e hover-visível no desktop.
+
+### Round 4 — dialog aberto desativa os itens de sessão (fix do toque longo no input)
+**Relato do usuário**: ao renomear no celular, o toque longo no input não mostrava o menu nativo do Android (selecionar tudo/copiar/colar) — "como se estivesse pressionando uma outra sessão por trás".
+
+**Fix (abordagem do usuário — itens inertes com dialog aberto):**
+1. `SessionActionsMenu` ganhou `onDialogOpenChange` — notifica o pai quando rename/move/delete abre/fecha; `onAction` de cada MenuItem chama `onOpenChange(false)` explicitamente (garante menu fechado antes do dialog).
+2. `app-sidebar` e `empty-state`: estado `dialogOpen`; `onContextMenu` dos itens retorna **antes** do `preventDefault` quando `dialogOpen` — o toque longo no input do dialog não abre o menu de sessão nem suprime o menu nativo de texto.
+
+**Validação (devtools):** menu abre por long-press ✓; dialog abre e menu fecha (`role="menu"` ausente) ✓; com dialog aberto, contextmenu no input → `defaultPrevented: false` + nenhum menu de sessão + dialog permanece ✓; long-press volta a funcionar após Cancel ✓.
