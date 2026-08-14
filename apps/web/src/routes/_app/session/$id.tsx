@@ -1614,7 +1614,7 @@ function SessionPage() {
                       ? "Queue message"
                       : "Send message"
                 }
-                className="absolute right-2 bottom-2"
+                className="absolute right-2 bottom-1"
               >
                 {isSubmitting ? (
                   <span className="grid size-4 place-items-center">
