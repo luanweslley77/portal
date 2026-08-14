@@ -1566,7 +1566,7 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none pl-0 pr-14 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
+              className={`w-full min-w-0 resize-none pl-0! ${input ? "min-h-14 max-h-32 overflow-y-auto pb-14!" : "pb-14! overflow-hidden text-sm placeholder:text-sm"}`}
               rows={5}
             />
             <input
