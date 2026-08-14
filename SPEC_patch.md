@@ -369,3 +369,55 @@ O código acumulou 3 camadas de mitigação manual (timers de long-press + guard
    - `sendMessage`: envia `parts` (file) + `text` no body do `/prompt`.
 
 **Validação (E2E devtools):** upload de `anexo-teste.txt` → chip aparece → enviar → resposta do modelo: "Called the Read tool with the following input: {"filePath":"anexo-teste.txt"}" + conteúdo do arquivo + texto da mensagem. **Fluxo completo funciona.** tsc limpo (3 pré-existentes).
+
+## 9. Composer estilo ChatGPT (redesenho completo do footer de input)
+
+### 9.1 Objetivo (feedback do usuário)
+
+Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (clipe e enviar), texto de **2+ linhas no wrapper** (acima dos botões), rolagem interna que **nunca deixa o texto alcançar os botões**, quebra de linha (explícita E automática) ativando o modo wrapper, e botão de enviar alinhado.
+
+### 9.2 Arquitetura final (espelhada do ChatGPT real — hierarquia medida no site)
+
+- **Caixa** (era `relative`): `relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20` — borda/ring/hover passam para a caixa.
+- **Wrapper de scroll** (filho da caixa): `max-h-60 overflow-y-auto scroll-pb-2` + **`pb-12` condicional** (só quando `wrapped` — a reserva do scroll vive no wrapper, não no texto).
+- **Textarea** (dentro do wrapper, `border-0! rounded-none! bg-transparent! focus:ring-0!`): cresce livre via `field-sizing-content`; classes condicionais:
+  - modo 1 linha: `min-h-11 pt-3 pb-1 pl-11! pr-13!` — texto entre os botões (começa após o clipe, termina antes do enviar);
+  - modo wrapper (2+ linhas): `min-h-12 py-2` — padding simétrico do componente (13px/13px mobile, 11px/11px desktop).
+- **Botões**: absolute na base da caixa — clipe `left-1 bottom-1 z-10` (button nativo discreto, sem fundo), enviar `right-2 bottom-1`.
+- **`measureRef`**: textarea invisível/absolute de medição de quebra de linha.
+
+### 9.3 Comportamentos (validados devtools 390x844 e 1280x800)
+
+- **1 linha:** campo compacto (44–52px); texto na **mesma faixa vertical dos botões** ("de um botão até o outro"); campo vazio ~90px total.
+- **Quebra (Enter OU wrap automático):** o texto "sobe" para o wrapper; última linha ~8–16px acima dos botões (o espaço liberado é usado pelo texto — sem vão).
+- **Muitas linhas:** wrapper rola em **240px** (`max-h-60`); fim do texto no scroll máximo fica **8px+ acima do enviar** (a reserva `pb-12` do wrapper garante — o texto nunca alcança os botões em nenhum scroll/caret).
+- **Botões:** sempre visíveis na base; enviar centralizado verticalmente no modo 1 linha.
+
+### 9.4 Bugs encontrados e correções
+
+1. **`field-sizing: content` alarga o textarea** por palavra longa sem quebra → `min-w-0` no textarea (e `minmax(0,1fr)` na fase grid).
+2. **Cascade**: `sm:px/py` do componente vencem `pl-0/pb-14` do chamador em viewport ≥640px → classes do chamador com **`!important`**.
+3. **Auto-scroll do caret** rola o texto sobre os botões (e scroll-padding é ignorado pelo caret-scroll de textarea) → solução **estrutural**: scroll no wrapper separado da faixa dos botões (arquitetura do ChatGPT; handler JS descartado).
+4. **Vão de ~40px** entre texto e botões (2–3 linhas) com `pb-14!` no textarea → reserva movida para o wrapper, condicional `wrapped` (`pb-12` só com 2+ linhas) — o texto desce e usa o espaço liberado.
+5. **Oscilação de modo entre ~66–100 chars**: a largura útil do texto muda entre os modos (268px no 1-linha vs 338px no wrapper), então a medição no textarea real alternava a cada tecla → medição num **textarea oculto** (`measureRef`) com largura fixa do modo 1 linha (`wrapper.clientWidth − 96px`, que é `pl-11`+`pr-13`), font/line-height iguais ao real. Resultado: **1 única transição** em cada direção.
+6. **`min-h-16` do componente** (64px) fazia a medição ler 2 linhas para um texto de 1 linha (campo preso no wrapper) → `min-h-12` (48px) no modo wrapper.
+7. **Botão enviar 6px acima do centro** no modo 1 linha (`bottom-2` + altura 40px vs clipe `bottom-1` 36px) → `bottom-1` (centro 766 vs caixa 768, 2px residuais).
+
+### 9.5 Detecção de quebra de linha (estável)
+
+- Estado `wrapped` + `useEffect` dependente de `input` que mede `scrollHeight`/`lineHeight` no textarea oculto — cobre **Enter, wrap automático e setInput programáticos** (slash/mention/clear/envio).
+- `wrapped` controla: `pb-12` do wrapper, `pl/pr` e altura do textarea, e o layout do botão enviar.
+
+### 9.6 Verificação final (devtools, mobile 390x844)
+
+- Digitação contínua 0→122 chars: **1 transição** (entra no wrapper no char ~36), permanece até o fim — zero oscilação.
+- Apagar 122→0: **1 transição** (volta ao modo 1 linha no char ~35).
+- Scroll no wrapper (15 linhas): fim do texto 734 vs enviar 742 (folga 8px) / clipe 750 (folga 16px).
+- Simetria do wrapper: 13px/13px (mobile), 11px/11px (desktop); modo 1 linha: pl-44px/pr-52px.
+- Enviar centralizado: centro 766 vs caixa 768 (2px).
+
+### 9.7 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — composer, estados `wrapped`/`measureRef`, useEffect de medição, classes condicionais.
+- `apps/web/src/components/ui/textarea.tsx` — componente base (inalterado; chamador usa `!important`).
+
