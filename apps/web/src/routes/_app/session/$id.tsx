@@ -1558,45 +1558,44 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! pl-0! focus:ring-0! ${input ? "min-h-14 py-2" : "min-h-11 py-1 text-sm placeholder:text-sm"}`}
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${input.includes("\n") ? "min-h-14 py-2 pl-0! pb-14!" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
               rows={5}
             />
             </div>
-            <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5 pt-1">
-              <button
-                type="button"
-                aria-label="Attach files"
-                className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => fileInputRef.current?.click()}
+            <button
+              type="button"
+              aria-label="Attach files"
+              className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <PaperclipIcon />
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              accept={ACCEPTED_ATTACHMENT_MIMES}
+              onChange={handleAttachFiles}
+            />
+            {(input.trim() || attachments.length > 0) && (
+              <Button
+                type="submit"
+                isDisabled={
+                  (!input.trim() && attachments.length === 0) || isSubmitting
+                }
+                isCircle
+                size="sq-sm"
+                aria-label={
+                  isSubmitting
+                    ? "Sending message"
+                    : sending
+                      ? "Queue message"
+                      : "Send message"
+                }
+                className="absolute right-2 bottom-2"
               >
-                <PaperclipIcon />
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                hidden
-                accept={ACCEPTED_ATTACHMENT_MIMES}
-                onChange={handleAttachFiles}
-              />
-              {(input.trim() || attachments.length > 0) && (
-                <Button
-                  type="submit"
-                  isDisabled={
-                    (!input.trim() && attachments.length === 0) || isSubmitting
-                  }
-                  isCircle
-                  size="sq-sm"
-                  aria-label={
-                    isSubmitting
-                      ? "Sending message"
-                      : sending
-                        ? "Queue message"
-                        : "Send message"
-                  }
-                  className="shrink-0"
-                >
                 {isSubmitting ? (
                   <span className="grid size-4 place-items-center">
                     <Loader className="size-4" aria-label="Sending message" />
@@ -1612,7 +1611,6 @@ function SessionPage() {
                 )}
               </Button>
             )}
-            </div>
           </div>
           <div className="mt-1 flex items-center gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
