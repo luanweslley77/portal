@@ -913,6 +913,7 @@ function SessionPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const measureRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
   const isNearBottomRef = useRef(true);
@@ -923,12 +924,19 @@ function SessionPage() {
 
   useEffect(() => {
     const t = textareaRef.current;
-    if (!t) return;
+    const m = measureRef.current;
+    if (!t || !m) return;
     const cs = getComputedStyle(t);
-    const linhas = Math.round(
-      (t.scrollHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom)) /
-        parseFloat(cs.lineHeight),
-    );
+    const wrapperEl = t.parentElement?.parentElement;
+    const larguraCampo = wrapperEl?.clientWidth ?? t.clientWidth;
+    m.value = input;
+    m.style.width = `${Math.max(100, larguraCampo - 96)}px`;
+    m.style.lineHeight = cs.lineHeight;
+    m.style.fontSize = cs.fontSize;
+    m.style.fontFamily = cs.fontFamily;
+    m.style.padding = "0";
+    m.style.border = "0";
+    const linhas = Math.round(m.scrollHeight / parseFloat(cs.lineHeight));
     setWrapped(linhas > 1);
   }, [input]);
 
@@ -1623,6 +1631,14 @@ function SessionPage() {
                 )}
               </Button>
             )}
+            <textarea
+              ref={measureRef}
+              aria-hidden="true"
+              tabIndex={-1}
+              readOnly
+              rows={1}
+              className="invisible pointer-events-none absolute left-0 top-0 h-auto resize-none overflow-hidden"
+            />
           </div>
           <div className="mt-1 flex items-center gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
