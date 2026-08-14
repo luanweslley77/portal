@@ -1450,16 +1450,8 @@ function SessionPage() {
               ))}
             </div>
           )}
-          <div className="relative">
-            <button
-              type="button"
-              aria-label="Attach files"
-              className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <PaperclipIcon />
-            </button>
+          <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
+            <div className="max-h-60 overflow-y-auto pb-2 scroll-pb-2">
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1479,14 +1471,6 @@ function SessionPage() {
                 slashCommand.handleInputChange(value, cursorPos, commands);
                 if (value.includes("@")) {
                   fileMention.handleInputChange(value, cursorPos);
-                }
-                if (target.scrollHeight > target.clientHeight) {
-                  setTimeout(() => {
-                    const maxTop = target.scrollHeight - target.clientHeight;
-                    if (target.scrollTop > maxTop - 60) {
-                      target.scrollTop = maxTop;
-                    }
-                  }, 0);
                 }
               }}
               onSelect={(e) => {
@@ -1574,34 +1558,45 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none pl-0! ${input ? "min-h-14 max-h-32 overflow-y-auto pb-14!" : "pb-14! overflow-hidden text-sm placeholder:text-sm"}`}
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! pl-0! focus:ring-0! ${input ? "min-h-14 py-2" : "min-h-11 py-1 text-sm placeholder:text-sm"}`}
               rows={5}
             />
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              hidden
-              accept={ACCEPTED_ATTACHMENT_MIMES}
-              onChange={handleAttachFiles}
-            />
-            {(input.trim() || attachments.length > 0) && (
-              <Button
-                type="submit"
-                isDisabled={
-                  (!input.trim() && attachments.length === 0) || isSubmitting
-                }
-                isCircle
-                size="sq-sm"
-                aria-label={
-                  isSubmitting
-                    ? "Sending message"
-                    : sending
-                      ? "Queue message"
-                      : "Send message"
-                }
-                className="absolute right-2 bottom-2"
+            </div>
+            <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5 pt-1">
+              <button
+                type="button"
+                aria-label="Attach files"
+                className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={() => fileInputRef.current?.click()}
               >
+                <PaperclipIcon />
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                accept={ACCEPTED_ATTACHMENT_MIMES}
+                onChange={handleAttachFiles}
+              />
+              {(input.trim() || attachments.length > 0) && (
+                <Button
+                  type="submit"
+                  isDisabled={
+                    (!input.trim() && attachments.length === 0) || isSubmitting
+                  }
+                  isCircle
+                  size="sq-sm"
+                  aria-label={
+                    isSubmitting
+                      ? "Sending message"
+                      : sending
+                        ? "Queue message"
+                        : "Send message"
+                  }
+                  className="shrink-0"
+                >
                 {isSubmitting ? (
                   <span className="grid size-4 place-items-center">
                     <Loader className="size-4" aria-label="Sending message" />
@@ -1617,6 +1612,7 @@ function SessionPage() {
                 )}
               </Button>
             )}
+            </div>
           </div>
           <div className="mt-1 flex items-center gap-2">
             {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
