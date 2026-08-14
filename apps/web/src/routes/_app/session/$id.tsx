@@ -1451,7 +1451,7 @@ function SessionPage() {
             </div>
           )}
           <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
-            <div className="max-h-60 overflow-y-auto pb-2 scroll-pb-2">
+            <div className={`max-h-60 overflow-y-auto scroll-pb-2 ${input.includes("\n") ? "pb-12" : "pb-0"}`}>
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1558,7 +1558,7 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${input.includes("\n") ? "min-h-14 py-2 pl-0! pb-14!" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${input.includes("\n") ? "min-h-14 py-2 pl-0!" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
               rows={5}
             />
             </div>
