@@ -1480,6 +1480,14 @@ function SessionPage() {
                 if (value.includes("@")) {
                   fileMention.handleInputChange(value, cursorPos);
                 }
+                if (target.scrollHeight > target.clientHeight) {
+                  setTimeout(() => {
+                    const maxTop = target.scrollHeight - target.clientHeight;
+                    if (target.scrollTop > maxTop - 60) {
+                      target.scrollTop = maxTop;
+                    }
+                  }, 0);
+                }
               }}
               onSelect={(e) => {
                 const target = e.target as HTMLTextAreaElement;
