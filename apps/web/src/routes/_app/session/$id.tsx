@@ -1450,7 +1450,16 @@ function SessionPage() {
               ))}
             </div>
           )}
-          <div className="relative">
+          <div className="relative grid grid-cols-[auto_minmax(0,1fr)] items-end gap-1 [&_[data-slot=control]]:min-w-0">
+            <button
+              type="button"
+              aria-label="Attach files"
+              className="mb-1 ml-0.5 flex size-9 shrink-0 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <PaperclipIcon />
+            </button>
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1557,18 +1566,9 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full resize-none pr-14 pl-12 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
+              className={`w-full min-w-0 resize-none pr-14 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
               rows={5}
             />
-            <button
-              type="button"
-              aria-label="Attach files"
-              className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <PaperclipIcon />
-            </button>
             <input
               ref={fileInputRef}
               type="file"
