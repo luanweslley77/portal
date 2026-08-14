@@ -355,3 +355,17 @@ O código acumulou 3 camadas de mitigação manual (timers de long-press + guard
 3. FileMentionPopover (desktop fixed): mesmo tratamento no effect de coords (mobile já usa absolute bottom-full e segue o composer).
 
 **Validação (devtools)**: com o popover aberto, mudança de viewport (390x600 simulando teclado) → popover re-posicionou automaticamente (top 499→255), mantendo gap de 10px acima do textarea. tsc limpo (3 pré-existentes nos hooks).
+
+### Round 6 — Envio de arquivos do celular (FilePart via data URL)
+**Viabilidade confirmada** (source opencode `session/prompt.ts`): `/prompt` aceita `parts` com `FilePartInput {type:"file", mime, filename?, url}`; o `url` aceita `data:` URL (texto é decodificado e injetado; imagens viram anexo e são normalizadas via `image.normalize`). Boas práticas do MDN: `FileReader.readAsDataURL`, `accept`, validação de tamanho.
+
+**Implementação:**
+1. `server/opencode/[port]/session/[id]/prompt.ts`: schema com `parts?` (array FilePartInput) e `text` opcional; `promptInput` = `[...parts, ...(text ? [textPart] : [])]`; 400 se vazio.
+2. `routes/_app/session/$id.tsx` (composer):
+   - `Attachment` state + `handleAttachFiles` (valida tamanho ≤8MB e mime: `image/*,application/pdf,text/plain,text/markdown,text/csv,application/json`; `FileReader.readAsDataURL`).
+   - Botão "Attach files" (Paperclip) + `<input type="file" multiple hidden accept=...>`.
+   - Chips dos anexos (nome + tamanho + remover) acima do textarea.
+   - `handleSubmit`: aceita texto OU anexos; otimista com file parts; limpa anexos após envio.
+   - `sendMessage`: envia `parts` (file) + `text` no body do `/prompt`.
+
+**Validação (E2E devtools):** upload de `anexo-teste.txt` → chip aparece → enviar → resposta do modelo: "Called the Read tool with the following input: {"filePath":"anexo-teste.txt"}" + conteúdo do arquivo + texto da mensagem. **Fluxo completo funciona.** tsc limpo (3 pré-existentes).

@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { Ripples } from "ldrs/react";
 import "ldrs/react/Ripples.css";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader } from "@/components/ui/loader";
@@ -26,7 +27,9 @@ import {
   IconUser,
   InformationCircleIcon,
   ListPlusIcon,
+  PaperclipIcon,
   SendIcon,
+  XMarkIcon,
 } from "@/components/icons/lucide";
 import { useAgentStore } from "@/stores/agent-store";
 import { useInstanceStore } from "@/stores/instance-store";
@@ -74,6 +77,44 @@ interface PromptSendResponse {
   mode?: "v2" | "legacy";
   message?: SessionMessage;
   messageID?: string;
+}
+
+interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  url: string;
+  size: number;
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_ATTACHMENT_MIMES =
+  "image/*,application/pdf,text/plain,text/markdown,text/csv,application/json";
+
+function isAcceptedAttachmentMime(mime: string) {
+  if (mime.startsWith("image/")) return true;
+  return [
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+  ].includes(mime);
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
 }
 
 function isValidSessionAgent(agents: Agent[], name?: string) {
@@ -867,9 +908,11 @@ function SessionPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
   const [fileResults, setFileResults] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const prevMessagesLengthRef = useRef(0);
@@ -1001,7 +1044,11 @@ function SessionPage() {
   }, [sessionId]);
 
   const sendMessage = useCallback(
-    async (messageText: string, messageId: string) => {
+    async (
+      messageText: string,
+      messageId: string,
+      messageAttachments: Attachment[] = [],
+    ) => {
       if (!sessionId || !port) return;
 
       try {
@@ -1024,7 +1071,13 @@ function SessionPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messageID: messageId,
-            text: messageText,
+            text: messageText || undefined,
+            parts: messageAttachments.map((attachment) => ({
+              type: "file",
+              mime: attachment.mime,
+              filename: attachment.name,
+              url: attachment.url,
+            })),
             model:
               selectedModel.providerID && selectedModel.modelID
                 ? selectedModel
@@ -1082,7 +1135,12 @@ function SessionPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const messageText = input.trim();
-    if (!messageText || !sessionId || !port || submitLockRef.current) {
+    if (
+      (!messageText && attachments.length === 0) ||
+      !sessionId ||
+      !port ||
+      submitLockRef.current
+    ) {
       return;
     }
 
@@ -1163,6 +1221,27 @@ function SessionPage() {
       return;
     }
 
+    const optimisticParts: Part[] = [
+      ...attachments.map((attachment) => ({
+        id: `${messageId}-part-${attachment.id}`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "file" as const,
+        mime: attachment.mime,
+        filename: attachment.name,
+        url: attachment.url,
+      })),
+    ];
+    if (messageText) {
+      optimisticParts.push({
+        id: `${messageId}-part`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "text",
+        text: messageText,
+      });
+    }
+
     const optimisticMessage: MessageWithParts = {
       info: {
         id: messageId,
@@ -1172,23 +1251,20 @@ function SessionPage() {
         agent: "user",
         model: { providerID: "", modelID: "" },
       },
-      parts: [
-        {
-          id: `${messageId}-part`,
-          sessionID: sessionId,
-          messageID: messageId,
-          type: "text",
-          text: messageText,
-        },
-      ],
+      parts: optimisticParts,
       isQueued: wasSending,
     };
     addOptimisticMessage(port, sessionId, optimisticMessage, provider);
 
-    void sendMessage(messageText, messageId).finally(() => {
-      submitLockRef.current = false;
-      setIsSubmitting(false);
-    });
+    const messageAttachments = attachments;
+    setAttachments([]);
+
+    void sendMessage(messageText, messageId, messageAttachments).finally(
+      () => {
+        submitLockRef.current = false;
+        setIsSubmitting(false);
+      },
+    );
 
     isNearBottomRef.current = true;
     scrollToBottom();
@@ -1208,6 +1284,45 @@ function SessionPage() {
 
     return () => window.clearInterval(interval);
   }, [port, provider, sending, sessionId]);
+
+  const handleAttachFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        toast.error(
+          `${file.name} is too large (max ${formatFileSize(
+            MAX_ATTACHMENT_BYTES,
+          )})`,
+        );
+        continue;
+      }
+      if (!isAcceptedAttachmentMime(file.type)) {
+        toast.error(`${file.name} has an unsupported type`);
+        continue;
+      }
+      readFileAsDataUrl(file)
+        .then((url) => {
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: `${file.name}-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 7)}`,
+              name: file.name,
+              mime: file.type,
+              url,
+              size: file.size,
+            },
+          ]);
+        })
+        .catch(() => toast.error(`Failed to read ${file.name}`));
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+  };
 
   return (
     <div className="-m-4 flex h-[calc(100%+2rem)] flex-col">
@@ -1311,6 +1426,29 @@ function SessionPage() {
               message={sendError}
               className="mb-3"
             />
+          )}
+          {attachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {attachments.map((attachment) => (
+                <span
+                  key={attachment.id}
+                  className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary/40 py-0.5 pl-2.5 pr-1 text-xs text-fg"
+                >
+                  <span className="truncate">{attachment.name}</span>
+                  <span className="shrink-0 text-[10px] text-muted-fg">
+                    {formatFileSize(attachment.size)}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${attachment.name}`}
+                    className="shrink-0 rounded-full p-0.5 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
+                    onClick={() => removeAttachment(attachment.id)}
+                  >
+                    <XMarkIcon className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
           )}
           <div className="relative">
             <Textarea
@@ -1419,13 +1557,34 @@ function SessionPage() {
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full resize-none pr-14 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
+              className={`w-full resize-none pr-14 pl-10 ${input ? "min-h-14 max-h-32 overflow-y-auto pb-2" : "min-h-11 max-h-11 overflow-hidden pb-1 text-sm placeholder:text-sm"}`}
               rows={5}
             />
-            {input.trim() && (
+            <Button
+              type="button"
+              intent="plain"
+              size="sq-sm"
+              isCircle
+              aria-label="Attach files"
+              className="absolute left-1.5 bottom-1 text-muted-fg hover:text-foreground"
+              onPress={() => fileInputRef.current?.click()}
+            >
+              <PaperclipIcon />
+            </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              accept={ACCEPTED_ATTACHMENT_MIMES}
+              onChange={handleAttachFiles}
+            />
+            {(input.trim() || attachments.length > 0) && (
               <Button
                 type="submit"
-                isDisabled={!input.trim() || isSubmitting}
+                isDisabled={
+                  (!input.trim() && attachments.length === 0) || isSubmitting
+                }
                 isCircle
                 size="sq-sm"
                 aria-label={

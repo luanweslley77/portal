@@ -32,6 +32,7 @@ import {
   Box,
   PanelLeft,
   Palette,
+  Paperclip,
   PenLine,
   Plus,
   RefreshCw,
@@ -90,10 +91,10 @@ export const HomeIcon = createAppIcon(Home);
 export const InformationCircleIcon = createAppIcon(Info);
 export const KeyIcon = createAppIcon(KeyRound);
 export const LifebuoyIcon = createAppIcon(LifeBuoy);
-export const ListPlusIcon = createAppIcon(ListPlus);
-export const MinusIcon = createAppIcon(Minus);
+export const ListPlusIcon = createAppIcon(ListPlus);export const MinusIcon = createAppIcon(Minus);
 export const MoonIcon = createAppIcon(Moon);
 export const PanelLeftIcon = createAppIcon(PanelLeft);
+export const PaperclipIcon = createAppIcon(Paperclip);
 export const PlusIcon = createAppIcon(Plus);
 export const ServerIcon = createAppIcon(Server);
 export const ShieldCheckIcon = createAppIcon(ShieldCheck);
