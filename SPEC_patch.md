@@ -501,3 +501,31 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 - `apps/web/src/hooks/use-commands.ts` — `BUILTIN_COMMANDS` sem undo/redo.
 - `apps/web/src/components/icons/lucide.tsx` — `Undo2Icon` (`Undo2`).
 
+
+## 12. Diff sem scroll lateral: linhas quebram (overflow: "wrap")
+
+### 12.1 Motivação
+
+- Na view `/diff`, linhas longas criavam **scroll lateral** no mobile. O comportamento desejado: **quebrar linhas** (wrap), sem scroll horizontal — igual ao upstream/desejo do usuário.
+
+### 12.2 Causa
+
+- O `FileDiff` (`@pierre/diffs/react`) por padrão usa `overflow: "scroll"` (default do pacote), que emite `data-overflow="scroll"` no shadow DOM → `[data-line] { white-space: pre }` + container scrollável (host `CODE` com `scrollWidth > clientWidth`).
+- O `main.css` tinha overrides mortos do antigo `react-diff-view` (`.diff-line`, `.diff-gutter`, `.diff-code` com `white-space: pre-wrap; word-break: break-all`, etc.) — o `@pierre/diffs` usa data-attributes + shadow DOM, então eram resíduos inócuos (removidos, sem efeito funcional).
+- Nenhum chunk buildado com `overflow:"wrap"` estava ativo; todos os builds serviam o default `"scroll"`.
+
+### 12.3 Fix
+
+- `apps/web/src/routes/_app/diff.tsx`: `options` do `FileDiff` agora inclui `overflow: "wrap"` explícito.
+- `apps/web/src/main.css`: removido o bloco inteiro "react-diff-view theme overrides" (morto).
+
+### 12.4 Verificação
+
+- Chunk deployado (`diff-C1WC_zMr.js`) contém `overflow:\`wrap\`` nas options.
+- Browser (CDP, viewport 390x844 mobile e 1280x800 desktop): `diffs-container` → `data-overflow="wrap"`, `[data-line]` com `white-space: pre-wrap` e `word-break: break-word`, e `scrollableHosts: []` (nenhum host com `scrollWidth > clientWidth`).
+- tsc: só os 3 erros pré-existentes.
+
+### 12.5 Arquivos
+
+- `apps/web/src/routes/_app/diff.tsx` — `overflow: "wrap"` nas options do FileDiff.
+- `apps/web/src/main.css` — removidos overrides do react-diff-view.
