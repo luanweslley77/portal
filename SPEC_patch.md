@@ -421,3 +421,83 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 - `apps/web/src/routes/_app/session/$id.tsx` — composer, estados `wrapped`/`measureRef`, useEffect de medição, classes condicionais.
 - `apps/web/src/components/ui/textarea.tsx` — componente base (inalterado; chamador usa `!important`).
 
+## 10. Fix: `/undo` não funcionava (e `/redo`, `/compact` quebrados)
+
+### 10.1 Sintoma
+
+- Digitar `/undo` no composer retornava "sucesso" (nenhum erro na UI) mas **nada acontecia** — as mensagens continuavam visíveis e o histórico não era revertido.
+
+### 10.2 Causa raiz
+
+1. **Payload errado na API**: `apps/web/src/server/opencode/[port]/session/[id]/builtin.ts` chamava `client.session.revert({ sessionID: id })` **sem `messageID`** — o servidor opencode (v1.18.16) exige `messageID` no body e responde `400 Missing key ["messageID"]`.
+2. **Erro engolido**: o SDK (`@opencode-ai/sdk`) retorna `{ error }` em vez de lançar (default `ThrowOnError: false`) → o handler não verificava `result.error` → devolvia `{ accepted: true }` mesmo com 400.
+3. Mesma falha em `/compact` (`summarize` exige `providerID` + `modelID`) e em `/redo` (sem lógica de desfazer a reversão parcial).
+4. Frontend não consumia o campo `revert` da sessão → mensagens revertidas continuavam renderizadas.
+
+### 10.3 Fix
+
+**Backend (`builtin.ts`)**:
+- `/undo`: busca a sessão + mensagens, pega a **última mensagem de usuário** anterior ao ponto de revert (`session.revert.messageID`), chama `revert({ sessionID, messageID })` com o ID real; aborta a sessão se estiver busy; `400 "Nothing to undo"` quando não há o que desfazer.
+- `/redo`: se há um ponto de revert e existem mensagens de usuário depois dele, reverte até a próxima; senão chama `unrevert` (restaura tudo) — espelha a lógica do CLI.
+- `/compact`: passa `providerID`/`modelID` do `session.model`.
+- **Todos os casos** checam `result.error` e lançam `HTTPError` com a mensagem do servidor.
+
+**Frontend (`$id.tsx`)**:
+- Extrai `currentSession.revert.messageID` (campo `revert` já vem no `GET /sessions`).
+- Filtra do histórico as mensagens com `id >= revert.messageID` (mesmo critério do CLI).
+- Banner no fim da conversa: "N messages reverted" + botão `/redo to restore` (chama `runBuiltinAction("redo")`).
+- Novo helper `runBuiltinAction(action)` reutilizado pelo path de comandos builtin do `handleSubmit` (antes inline).
+
+### 10.4 Verificação (API end-to-end)
+
+- `/undo` em sessão com user+assistant: `200` + `session.revert.messageID` preenchido.
+- `/redo`: `200` + `revert` volta a `null`.
+- `/undo` sem nada a desfazer: `400 {"message":"Nothing to undo"}` (antes: 200 falso).
+- `/compact`: `200` (antes: 400 `Missing key ["providerID"]` engolido).
+- tsc: só os 3 erros pré-existentes.
+
+### 10.5 Arquivos
+
+- `apps/web/src/server/opencode/[port]/session/[id]/builtin.ts` — payload correto + checagem de erros do SDK.
+- `apps/web/src/routes/_app/session/$id.tsx` — filtro de revertidas, banner `/redo`, `runBuiltinAction`.
+
+## 11. Undo por mensagem: seta em cada user message + `/undo` fora do popover
+
+### 11.1 Motivação
+
+- Mesmo tratamento já dado ao `/redo` na seção anterior: o usuário quer **undo por mensagem** — seta em cada mensagem de usuário que reverte a conversa até aquela mensagem — e quer que `/undo` (assim como `/redo`) **saia do popover de slash commands** e do reconhecimento por digitação manual (só as setas disparam a ação).
+
+### 11.2 Mudanças
+
+**Backend (`builtin.ts`)**:
+- Schema aceita `messageID` opcional no body (`z.string().optional()`).
+- Case `undo` com `body.messageID` chama `revert({ sessionID, messageID })` **diretamente** com o ID alvo; sem `messageID` mantém a lógica antiga (última user message).
+
+**Frontend (`$id.tsx`)**:
+- `runBuiltinAction(action, messageID?)` — segundo parâmetro opcional enviado no body.
+- `MessageItem` recebe props `onUndo(messageID)` e `isOptimistic`.
+- Seta `Undo2Icon` (aria-label "Undo to this message") na base de cada mensagem de usuário, **escondida** quando `isQueued` (otimista/enviando) ou `isOptimistic`.
+- `optimisticMessageIDs`: ids de mensagens de usuário marcadas com `metadata.portalOptimistic` (mensagens ainda não confirmadas pelo backend) — seta fica oculta nelas.
+- Array `isBuiltinCommand` (digitação manual de `/cmd`) **sem** `undo`/`redo` — só `compact`, `share`, `unshare`, `fork` disparam.
+
+**`use-commands.ts`**:
+- `BUILTIN_COMMANDS` sem `undo` e sem `redo` (o popover já não mostra nenhum dos dois).
+
+### 11.3 Verificação (API end-to-end)
+
+- `POST /builtin { action: "undo", messageID: <id de user msg> }` → `200` e `session.revert.messageID` = o id alvo (reverte o histórico até aquela mensagem).
+- `/redo` → avança o ponto de revert; `unrevert` → `revert: null` (estado restaurado).
+- Bundles deployados contêm: aria-label "Undo to this message" + wiring `onUndo` no chunk `_id`; ícone `Undo2` no chunk lucide; `messageID` no `builtin.mjs`.
+- tsc: só os 3 erros pré-existentes (não introduzidos).
+
+### 11.4 Nota — teste na sessão ativa
+
+- O teste end-to-end foi feito numa sessão **ativa** do opencode no próprio diretório do repo; o `/undo` com `messageID` revertou também o working tree (snapshots da sessão). Sessão restaurada com `unrevert`. Working tree reconciliado contra o build deployado.
+
+### 11.5 Arquivos
+
+- `apps/web/src/server/opencode/[port]/session/[id]/builtin.ts` — `messageID` opcional no `undo`.
+- `apps/web/src/routes/_app/session/$id.tsx` — seta `Undo2Icon`, `onUndo`, `optimisticMessageIDs`, `isBuiltinCommand` sem undo/redo.
+- `apps/web/src/hooks/use-commands.ts` — `BUILTIN_COMMANDS` sem undo/redo.
+- `apps/web/src/components/icons/lucide.tsx` — `Undo2Icon` (`Undo2`).
+

@@ -71,7 +71,10 @@ export function useSessionStatuses() {
 export function useConfig() {
   const backend = useBackend();
 
-  return useSWR(backend ? `${backend.basePath}/config` : null, fetcher);
+  return useSWR<import("@opencode-ai/sdk/v2").Config>(
+    backend ? `${backend.basePath}/config` : null,
+    fetcher,
+  );
 }
 
 export function useProviders() {
@@ -90,6 +93,67 @@ export function useHealth() {
   const backend = useBackend();
 
   return useSWR(backend ? `${backend.basePath}/health` : null, fetcher);
+}
+
+export function useMcpStatus() {
+  const backend = useBackend();
+
+  return useSWR<Record<string, import("@opencode-ai/sdk/v2").McpStatus>>(
+    backend ? `${backend.basePath}/mcp/status` : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+    },
+  );
+}
+
+export function useLspStatus() {
+  const backend = useBackend();
+
+  return useSWR<import("@opencode-ai/sdk/v2").LspStatus[]>(
+    backend ? `${backend.basePath}/lsp/status` : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+    },
+  );
+}
+
+export function useFormatterStatus() {
+  const backend = useBackend();
+
+  return useSWR<import("@opencode-ai/sdk/v2").FormatterStatus[]>(
+    backend ? `${backend.basePath}/formatter/status` : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+    },
+  );
+}
+
+export function useToggleMcp() {
+  const backend = useBackend();
+
+  return async (name: string, enabled: boolean) => {
+    if (!backend) throw new Error("No instance selected");
+
+    const res = await fetch(
+      `${backend.basePath}/mcp/${encodeURIComponent(name)}/${
+        enabled ? "disconnect" : "connect"
+      }`,
+      { method: "POST" },
+    );
+
+    if (!res.ok) {
+      const fallback = `Failed to ${enabled ? "disable" : "enable"} MCP server`;
+      const body = await res.json().catch(() => null);
+      throw new Error(
+        body?.data?.message ?? body?.message ?? `${fallback}: ${res.status}`,
+      );
+    }
+
+    return res.json();
+  };
 }
 
 export function useCurrentProject() {

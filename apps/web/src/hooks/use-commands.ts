@@ -9,12 +9,12 @@ export interface SlashCommand {
 }
 
 const BUILTIN_COMMANDS: SlashCommand[] = [
-  { name: "undo", description: "Revert the last message", source: "builtin" },
-  { name: "redo", description: "Restore a reverted message", source: "builtin" },
   { name: "compact", description: "Summarize the session", source: "builtin" },
   { name: "share", description: "Share the session", source: "builtin" },
   { name: "unshare", description: "Stop sharing the session", source: "builtin" },
   { name: "fork", description: "Fork the session", source: "builtin" },
+  { name: "mcps", description: "Enable/disable MCP servers", source: "builtin" },
+  { name: "status", description: "View session/system status", source: "builtin" },
 ];
 
 const fetcher = async (url: string): Promise<SlashCommand[]> => {

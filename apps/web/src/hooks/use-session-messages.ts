@@ -211,13 +211,34 @@ export function useSessionMessages(sessionId: string | undefined) {
     revalidateOnFocus: false,
   });
 
-  const messages = useMemo(
-    () =>
-      sessionId
-        ? sessionMessagesToLegacyCached(key ?? "", data ?? [], sessionId)
-        : [],
-    [key, data, sessionId],
-  );
+  const pendingAssistantID = useMemo(() => {
+    const assistants = (data ?? []).filter(
+      (message) => message.type === "assistant",
+    );
+    const lastCompleted = [...assistants]
+      .reverse()
+      .find((message) => message.time.completed)?.id;
+    return [...assistants]
+      .reverse()
+      .find(
+        (message) =>
+          !message.time.completed &&
+          (!lastCompleted || message.id > lastCompleted),
+      )?.id;
+  }, [data]);
+
+  const messages = useMemo(() => {
+    const converted = sessionId
+      ? sessionMessagesToLegacyCached(key ?? "", data ?? [], sessionId)
+      : [];
+    if (!pendingAssistantID) return converted;
+    return converted.map((message) =>
+      message.info.role === "user" &&
+      message.info.id > pendingAssistantID
+        ? { ...message, isQueued: true }
+        : message,
+    );
+  }, [key, data, sessionId, pendingAssistantID]);
 
   return {
     messages,

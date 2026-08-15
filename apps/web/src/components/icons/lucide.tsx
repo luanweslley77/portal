@@ -45,6 +45,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Undo2,
   User,
   X,
 } from "lucide-react";
@@ -101,6 +102,7 @@ export const ShieldCheckIcon = createAppIcon(ShieldCheck);
 export const SunIcon = createAppIcon(Sun);
 export const SwatchIcon = createAppIcon(Palette);
 export const TrashIcon = createAppIcon(Trash2);
+export const Undo2Icon = createAppIcon(Undo2);
 export const XMarkIcon = createAppIcon(X);
 
 export const FileDiffIcon = createAppIcon(FileDiff, "18px");

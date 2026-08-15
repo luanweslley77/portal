@@ -42,6 +42,7 @@ import {
   SidebarRail,
   SidebarSection,
   SidebarSectionGroup,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   useSessions,
@@ -190,6 +191,7 @@ export default function AppSidebar(
   const [dialogOpen, setDialogOpen] = useState(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
+  const { isMobile, setIsOpenOnMobile } = useSidebar();
   const { data: hostnameData } = useHostname();
   const hostname = hostnameData?.hostname ?? "Loading...";
   const { data: sessionsData, mutate: mutateSessions } = useSessions();
@@ -287,6 +289,9 @@ export default function AppSidebar(
             <SidebarItem
               tooltip="View Git Diff"
               href="/diff"
+              onPress={() => {
+                if (isMobile) setIsOpenOnMobile(false);
+              }}
               className="cursor-pointer gap-x-2"
               badge={diffFileCount > 0 ? diffFileCount : undefined}
             >
@@ -308,7 +313,12 @@ export default function AppSidebar(
               >
                 {() => (
                   <>
-                    <SidebarLink href={`/session/${session.id}`}>
+                    <SidebarLink
+                      href={`/session/${session.id}`}
+                      onPress={() => {
+                        if (isMobile) setIsOpenOnMobile(false);
+                      }}
+                    >
                       <SidebarLabel>
                         {truncateTitle(session.title)}
                       </SidebarLabel>

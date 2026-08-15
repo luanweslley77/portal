@@ -16,6 +16,8 @@ import {
   useFileMention,
 } from "@/components/file-mention-popover";
 import { CommandPopover } from "@/components/command-popover";
+import { McpDialog } from "@/components/mcp-dialog";
+import { StatusDialog } from "@/components/status-dialog";
 import { useSlashCommand } from "@/hooks/use-slash-command";
 import { useCommands } from "@/hooks/use-commands";
 import {
@@ -29,6 +31,7 @@ import {
   ListPlusIcon,
   PaperclipIcon,
   SendIcon,
+  Undo2Icon,
   XMarkIcon,
 } from "@/components/icons/lucide";
 import { useAgentStore } from "@/stores/agent-store";
@@ -759,6 +762,8 @@ const MessageItem = memo(function MessageItem({
   pendingQuestions,
   onPermissionResolved,
   onQuestionResolved,
+  onUndo,
+  isOptimistic,
 }: {
   message: MessageWithParts;
   port: number;
@@ -768,6 +773,8 @@ const MessageItem = memo(function MessageItem({
   pendingQuestions: QuestionRequest[];
   onPermissionResolved: (requestId: string) => void;
   onQuestionResolved: (requestId: string) => void;
+  onUndo?: (messageID: string) => void;
+  isOptimistic?: boolean;
 }) {
   const textContent = getMessageContent(message.parts);
   const isAssistant = message.info.role === "assistant";
@@ -808,6 +815,17 @@ const MessageItem = memo(function MessageItem({
               />
             )}
           </div>
+          {!isAssistant && !message.isQueued && !isOptimistic && onUndo && (
+            <button
+              type="button"
+              onClick={() => onUndo(message.info.id)}
+              className="shrink-0 mt-0.5 p-1 text-muted-fg hover:text-foreground transition-colors"
+              aria-label="Undo to this message"
+              title="Undo to this message"
+            >
+              <Undo2Icon size="15px" />
+            </button>
+          )}
         </div>
       )}
       {toolCalls.length > 0 && (
@@ -878,6 +896,31 @@ function SessionPage() {
   const sessions: Session[] = sessionsData ?? [];
   const agents: Agent[] = agentsData ?? [];
   const currentSession = sessions.find((s) => s.id === sessionId);
+  const revertMessageID = currentSession?.revert?.messageID;
+
+  const revertedMessages = useMemo(() => {
+    if (!revertMessageID) return [];
+    return messages.filter(
+      (message) =>
+        message.info.id >= revertMessageID &&
+        message.info.role === "user",
+    );
+  }, [messages, revertMessageID]);
+
+  const visibleMessages = useMemo(() => {
+    if (!revertMessageID) return messages;
+    return messages.filter((message) => message.info.id < revertMessageID);
+  }, [messages, revertMessageID]);
+
+  const optimisticMessageIDs = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of sessionMessages ?? []) {
+      if (message.metadata?.portalOptimistic === true) {
+        ids.add(message.id);
+      }
+    }
+    return ids;
+  }, [sessionMessages]);
 
   useEffect(() => {
     if (currentSession?.title) {
@@ -906,6 +949,8 @@ function SessionPage() {
   const [sendError, setSendError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [wrapped, setWrapped] = useState(false);
+  const [dialog, setDialog] = useState<"mcps" | "status" | null>(null);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
   const [fileResults, setFileResults] = useState<string[]>([]);
@@ -1010,7 +1055,41 @@ function SessionPage() {
   );
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = chatContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) return;
+
+    const handleVisualViewportChange = () => {
+      const diff = window.innerHeight - visualViewport.height;
+      if (diff > 0 && diff < window.innerHeight * 0.6) {
+        setKeyboardOffset(diff);
+      } else {
+        setKeyboardOffset(0);
+      }
+    };
+
+    visualViewport.addEventListener("resize", handleVisualViewportChange);
+    visualViewport.addEventListener("scroll", handleVisualViewportChange);
+    handleVisualViewportChange();
+
+    return () => {
+      visualViewport.removeEventListener(
+        "resize",
+        handleVisualViewportChange,
+      );
+      visualViewport.removeEventListener(
+        "scroll",
+        handleVisualViewportChange,
+      );
+    };
   }, []);
 
   const checkIfNearBottom = useCallback(() => {
@@ -1152,6 +1231,49 @@ function SessionPage() {
     ],
   );
 
+  const runBuiltinAction = useCallback(
+    async (action: string, messageID?: string) => {
+      if (!sessionId || !port) return;
+      try {
+        const response = await fetch(
+          `${apiBase}/session/${sessionId}/builtin`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action,
+              ...(messageID ? { messageID } : {}),
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const fallback = `Failed to run /${action} (${response.status}${
+            response.statusText ? ` ${response.statusText}` : ""
+          })`;
+          throw new Error(await getResponseErrorMessage(response, fallback));
+        }
+      } catch (err) {
+        setSendError(
+          err instanceof Error ? err.message : `Failed to run /${action}`,
+        );
+      } finally {
+        mutateSessionMessages(port, sessionId, provider);
+        mutateSessionStatuses();
+        mutateSessions();
+      }
+    },
+    [
+      apiBase,
+      sessionId,
+      port,
+      provider,
+      mutateSessionMessages,
+      mutateSessionStatuses,
+      mutateSessions,
+    ],
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const messageText = input.trim();
@@ -1176,13 +1298,20 @@ function SessionPage() {
     const [firstWord, ...firstWordArgs] = firstLine.split(" ");
     const isBuiltinCommand =
       messageText.startsWith("/") &&
-      ["undo", "redo", "compact", "share", "unshare", "fork"].includes(
+      ["compact", "share", "unshare", "fork"].includes(
         firstWord.slice(1),
       );
     const isSlashCommand =
       !isBuiltinCommand &&
       messageText.startsWith("/") &&
       commands.some((command) => command.name === firstWord.slice(1));
+
+    if (firstWord === "/mcps" || firstWord === "/status") {
+      setDialog(firstWord.slice(1) as "mcps" | "status");
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
 
     if (isShellCommand || isSlashCommand || isBuiltinCommand) {
       void (async () => {
@@ -1200,8 +1329,8 @@ function SessionPage() {
             url = `${apiBase}/session/${sessionId}/shell`;
             body = { messageID: messageId, command: firstLineText.slice(1) };
           } else if (isBuiltinCommand) {
-            url = `${apiBase}/session/${sessionId}/builtin`;
-            body = { action: firstWord.slice(1) };
+            await runBuiltinAction(firstWord.slice(1));
+            return;
           } else {
             url = `${apiBase}/session/${sessionId}/command`;
             body = {
@@ -1230,9 +1359,6 @@ function SessionPage() {
         } finally {
           submitLockRef.current = false;
           setIsSubmitting(false);
-          mutateSessionMessages(port, sessionId, provider);
-          mutateSessionStatuses();
-          mutateSessions();
         }
       })();
 
@@ -1345,7 +1471,10 @@ function SessionPage() {
   };
 
   return (
-    <div className="-m-4 flex h-[calc(100%+2rem)] flex-col">
+    <div
+      className="-m-4 flex h-[calc(100%+2rem)] flex-col"
+      style={keyboardOffset > 0 ? { paddingBottom: keyboardOffset } : undefined}
+    >
       <div
         className="flex-1 overflow-auto overflow-x-hidden"
         ref={chatContainerRef}
@@ -1369,7 +1498,7 @@ function SessionPage() {
         )}
 
         <div className="divide-y divide-dashed divide-border overflow-x-hidden">
-          {messages
+          {visibleMessages
             .filter((message) => hasVisibleContent(message))
             .map((message) => (
               <MessageItem
@@ -1382,8 +1511,26 @@ function SessionPage() {
                 pendingQuestions={pendingQuestions}
                 onPermissionResolved={handlePermissionResolved}
                 onQuestionResolved={handleQuestionResolved}
+                onUndo={(messageID) => void runBuiltinAction("undo", messageID)}
+                isOptimistic={optimisticMessageIDs.has(message.info.id)}
               />
             ))}
+          {revertedMessages.length > 0 && (
+            <div className="flex items-center justify-between gap-3 px-6 py-4">
+              <span className="text-sm text-muted-fg">
+                {revertedMessages.length}{" "}
+                {revertedMessages.length === 1 ? "message" : "messages"}{" "}
+                reverted
+              </span>
+              <Button
+                size="sm"
+                intent="outline"
+                onPress={() => void runBuiltinAction("redo")}
+              >
+                Redo
+              </Button>
+            </div>
+          )}
           {unlinkedPermissions.length > 0 && (
             <div className="px-6 py-4 space-y-2 border-t border-dashed border-border">
               {unlinkedPermissions.map((permission) => (
@@ -1646,6 +1793,14 @@ function SessionPage() {
           </div>
         </form>
       </div>
+      <McpDialog
+        isOpen={dialog === "mcps"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      />
+      <StatusDialog
+        isOpen={dialog === "status"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      />
     </div>
   );
 }
