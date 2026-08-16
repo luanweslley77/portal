@@ -529,3 +529,245 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 
 - `apps/web/src/routes/_app/diff.tsx` — `overflow: "wrap"` nas options do FileDiff.
 - `apps/web/src/main.css` — removidos overrides do react-diff-view.
+
+## 13. Tool call "em cascata" colada ao texto do modelo
+
+### 13.1 Relato (feedback do usuário)
+
+- Sempre que o modelo respondia com texto e em seguida usava uma tool, a primeira tool aparecia **"em cascata"** logo abaixo do texto, como se fizesse parte da mensagem de texto.
+
+### 13.2 Causa raiz
+
+- No formato v2 do OpenCode, cada "step" do modelo vira **uma única mensagem assistant** com `content: [step-start, reasoning, text, tool, step-finish]` — texto e tool na mesma mensagem (confirmado em dados live: `ses_fffc5916...`, msgs como `H8t6E0Nd6ARE` com `['step-start','reasoning','text','tool','step-finish']`).
+- `MessageItem` (`routes/_app/session/$id.tsx`) renderizava texto e, no mesmo bloco, as tools como **linhas mono simples indentadas com `ml-6`** — sem borda/fundo, pareciam continuação do parágrafo.
+- Inconsistência: o box de `question` e o `PermissionRequestForm` já eram cards com borda; só a tool comum era linha "crua".
+
+### 13.3 Fix
+
+- `ToolCallItem`: linha simples → **chip/card** `rounded-md border px-2.5 py-1 font-mono text-xs`, com cor por estado seguindo o padrão dos cards existentes:
+  - completed → `border-border bg-muted/25 text-muted-fg`
+  - pending/running → `border-warning/40 bg-warning/10 text-warning` (+ `...` pulse mantido)
+  - error → `border-danger/40 bg-danger-subtle/30 text-danger`
+- `MessageItem`: removido o `ml-6` das blocks de tools e permissões → `mt-3 space-y-1` / `mt-3 space-y-2` sem indentação.
+
+### 13.4 Fix 2 — tool dentro do delimitador tracejado da mensagem (feedback do usuário)
+
+- O chip parou de "cascatear", mas a primeira tool ainda ficava **dentro do bloco tracejado** da mensagem de texto (o container da lista usa `divide-y divide-dashed`, e o `MessageItem` era um único filho `py-3 px-6` com texto+tools juntos).
+- Fix: `MessageItem` virou **fragment com até 3 rows irmãs** (`py-3 px-6` cada): texto / tools (`space-y-1`) / permissões (`space-y-2`). As rows viram filhos diretos do `divide-y` → cada uma ganha delimitador tracejado próprio (no Tailwind v4 o `divide-y` aplica `border-bottom: 1px dashed` em `:not(:last-child)`), idêntico às mensagens só-de-tool.
+- `hasVisibleContent` inalterado; nenhuma mudança em hooks/estado.
+
+### 13.5 Verificação
+
+- tsc: só os 3 erros pré-existentes.
+- Build deployado: chunk da rota de sessão (`_id-*.js`) contém as classes do chip e **zero** `ml-6`.
+- CDP (mobile 390x844 e desktop 1280x800): row do texto com `border-bottom: 1px dashed` e a row da tool (`py-3 px-6`) logo abaixo, também com o próprio `1px dashed` — tool fora do delimitador do texto; screenshot mostra texto e tool em blocos separados.
+
+### 13.6 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — `ToolCallItem` como chip card; `MessageItem` split em rows irmãs (texto/tools/permissões).
+
+## 14. Tool expansível estilo TUI (click no card = conteúdo completo)
+
+### 14.1 Motivação (feedback do usuário)
+
+- Queria expandir as tools clicando nelas para ver **todo o conteúdo**; sem scroll interno (a rolagem principal do chat percorre o card); sem JSON cru — tudo **texto contínuo** com a linha de invocação fazendo parte do conteúdo, **como o TUI** do opencode (`~/opencode/packages/tui/src/routes/session/index.tsx`).
+
+### 14.2 Implementação
+
+- `ToolCallItem` vira card expansível: container único com `role="button"`, `tabIndex`, `aria-expanded`, `onClick` + Enter/espaço no `onKeyDown` — **qualquer pixel do card alterna**.
+- **Colapsado**: chip com ícone + label truncado + chevron.
+- **Expandido**: só o texto contínuo (sem header truncado, sem `border-t`): `<pre>` com a invocação completa como 1ª linha + output + erro; rodapé mudo `Click to collapse` (chevron rotacionado, `select-none` — não copiável).
+- `toolExpandedLines(part)` — formatação por tool espelhando o TUI, **sem JSON**:
+  - `bash`/shell → `$ <comando completo>`
+  - `read` → `Read <path> [offset=…, limit=…]` (args primitivos extras)
+  - `grep`/`glob` → `Grep "<pattern>" in <path>` / `Glob "<pattern>" in <path>`
+  - `write` → `Write <path>` + `input.content` (o conteúdo escrito por inteiro)
+  - `edit` → `Edit <path> [replaceAll=…]` + `metadata.diff` (structured do server)
+  - `webfetch` → `WebFetch <url>`; `websearch` → `WebSearch "<query>"`
+  - `skill` → `Skill "<name>"`
+  - `todowrite` → `Todos` + `[✓]`/`[•]`/`[ ] <content>` por item (parse de `input.todos`; **output JSON do server nunca exibido**)
+  - `apply_patch` → `Patch` + por arquivo (`Patched`/`Created`/`Deleted`/`Moved <path>` + patch, de `metadata.files`)
+  - `task` → `Task <description>`; `execute` → `execute` + `↳ <tool> [args]` por `metadata.toolCalls`
+  - genérico → `<tool> [k=v, …]` (só primitivos, igual `input()` do TUI) + output cru
+- Helpers: `formatToolArgs` (primitivos string/number/boolean), `formatToolInvocation`, `toolMetadata` (acesso seguro a `state.metadata` na união), `parseTodoItems`, `parseApplyPatchFiles`, `toolExpandedLines`.
+
+### 14.3 Guards anti-colapso durante cópia/seleção (feedback do usuário)
+
+- `toggleExpanded(event)` **não colapsa** quando:
+  - `window.getSelection()?.toString()` não vazio (seleção ativa)
+  - `event.detail > 1` (duplo-clique)
+  - `hadSelection` no `onPointerDown` (mousedown começou com seleção ativa → clique de **deseleção**; o mousedown limpa a seleção antes do click, então a checagem no click não bastava)
+  - pointer moveu > 4px entre `onPointerDown` e o clique (arrasto)
+- **Toggle diferido (250ms)**: o clique agenda o toggle num timer; se chegar um 2º clique dentro da janela (duplo-clique), o timer é cancelado e nada alterna — resolve o 1º clique do duplo-clique, que colapsaria antes da seleção de palavra existir. Consequência: duplo-clique em card colapsado não expande (vira gesto de seleção puro). Timer limpo no unmount.
+- Teclado (Enter/espaço): cancela timer pendente e alterna **imediatamente** (sem latência).
+- Rodapé `Click to collapse` com `select-none` (não copiável; clique segue funcionando no container).
+
+### 14.3.1 Copiar a partir do card colapsado = conteúdo completo (feedback do usuário)
+
+> **Substituído pela §17** — o `onCopy` por card + heurística de rects (abaixo) só funcionava com a seleção inteira dentro do card; seleção que cruzava a borda copiava o label truncado. Agora há um único listener de `copy` no documento (§17) que reescreve a seleção inteira.
+
+- Regra: **copiar de um chip truncado (colapsado) selecionando até a reticência → copia o conteúdo completo** (`toolExpandedLines(part).join("\n")`); seleção parcial (não alcança a reticência) → cópia nativa do selecionado; chip não-truncado → nativo; expandido → nativo.
+- `onCopy` no container (`cardRef`), só age com o card **colapsado**: seleção vazia ou com nó comum fora do card → passa; chip sem truncamento → passa; senão:
+  - `truncated` = `labelEl.scrollWidth > labelEl.clientWidth + 1` (clip visual) **ou** `label.endsWith("...")` (bash >50 chars)
+  - a seleção **alcança a reticência** quando `selRect.left < labelRight` (sobrepõe a borda direita do label — exclui seleção só do details/ícone) **e** `selRect.right >= labelRight - 24` (zona da reticência ~24px) → `preventDefault()` + `clipboardData.setData("text/plain", …)`
+- Evolução da detecção (bugs encontrados em sequência):
+  1. `selection.toString().includes("...")` — falhava no mobile: o CSS `truncate` clippa o label antes do `"..."` literal do DOM (medido 418px vs 287px visíveis), arrasto real nunca captura o `"..."`
+  2. `endsWith("...") || visuallyTruncated` — interceptava **qualquer** seleção de chip truncado (copiava tudo sempre): o `endsWith` é verdadeiro independente do trecho selecionado e o `visuallyTruncated` também
+  3. Atual: checagem por **fronteira visual** via rects da seleção vs borda direita do label (acima)
+- Cards de `question` inalterados (já exibem tudo inline).
+
+### 14.4 Verificação
+
+- tsc: só os 3 erros pré-existentes.
+- Build deployado (`index-*.js` + chunk `_id-*.js` com `Click to collapse`).
+- CDP mobile 390x844 e desktop 1280x800 (validação com retries; abas antigas com SSE saturam conexão do Chrome — fechar abas antes):
+  - expandir → texto contínuo inicia com a invocação (ex. `$ term-cli start …`, `Read … [offset=…]`, `Todos` + `[✓]/[•]/[ ]`), `overflow-y: visible` (sem scroll interno)
+  - duplo-clique (detail=2) → não colapsa; arrasto >4px → não colapsa; seleção ativa + clique → não colapsa; clique de deseleção (pointerdown com seleção) → não colapsa
+  - clique limpo (pointerdown+click na mesma posição) → alterna **após ~250ms**; 2º clique na janela cancela (duplo-clique não alterna); Enter → alterna imediato
+  - footer: `user-select: none`
+  - copiar colapsado: seleção parcial (ex. 15 primeiros chars) → nativo; seleção até a reticência / select-all → conteúdo completo; chip não-truncado → nativo; expandido (trecho) → nativo
+  - `todowrite` sem JSON (`Todos` + checkboxes); `write` mostra `input.content`; `skill` mostra `Skill "<name>"`
+
+### 14.5 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — `ToolCallItem` expansível estilo TUI, `toolExpandedLines` e helpers, guards anti-cópia, footer `select-none`.
+
+## 16. Composer: scroll só no wrapper — texto nunca invade a área dos botões
+
+### 16.1 Relato (feedback do usuário)
+
+- Muitas quebras de linha no composer: o caret/última linha acabava fora da área visível e o texto passava **por trás dos botões** attach/enviar ("invadindo onde não devia").
+
+### 16.2 Investigação (medições CDP)
+
+- Arquitetura: textarea `field-sizing-content` (cresce, sem scroll interno) dentro de wrapper `max-h-60 overflow-y-auto`; botões são filhos do box externo (`absolute bottom-1`), sobrepostos ao fundo do wrapper.
+- O navegador mantém o caret com folga de só 8px (`scroll-pb-2`) da borda inferior → com os botões (~40px) sobrepostos, a linha do caret ficava **sempre atrás dos botões** (medido: caretLine [713,737] vs buttons [706,742] em 10→23 linhas, congelado na mesma posição).
+- O `pb-12` do wrapper só protegia com scroll no fim (`scrollTop = scrollHeight`) — o navegador nunca rola até o fim (scroll mínimo para a folga).
+- Tentativas descartadas: (a) pin JS no `onInput` (`scrollTop = scrollHeight` quando caret no fim) — funcionava nas medições mas o usuário ainda via falha ao rolar para cima; (b) textarea com `max-h-60 overflow-y-auto` interno + wrapper `overflow-hidden` — piorou (rolagem interna do textarea).
+
+### 16.3 Fix (arquitetura do usuário — simples e robusta)
+
+- **Scroll só no wrapper**, e os **botões ficam FORA da área de scroll**:
+  - Wrapper: `` `max-h-60 overflow-y-auto scroll-pb-2 ${wrapped ? "mb-12" : ""}` `` — o `mb-12` (48px) quando wrapped cria uma faixa no box externo onde os botões (absolute `bottom-1`) ficam **abaixo da borda do wrapper** → o texto rolado termina na borda do wrapper e **nunca alcança os botões, por construção**.
+  - Removidos `pb-12` e `scroll-pb-12` do wrapper (a faixa `mb-12` substitui); mantido `scroll-pb-2` (folga do caret na borda).
+  - Removido o pin do `onInput` (desnecessário — sem sobreposição, não há invasão a corrigir; o scroll natural do browser cuida do caret).
+- Modo 1-linha: inalterado (sem scroll, botões ao lado do texto com `pl-11! pr-13!`, sem `mb-12`).
+
+### 16.4 Verificação
+
+- tsc: só os 3 erros pré-existentes. Deploy `index-D9uUpSeG.js`.
+- CDP desktop 1280x800 e mobile 390x844 (22 linhas via `insertText`):
+  - `taScrollTop: 0` (textarea sem scroll) e `wScrollTop` cresce (scroll só no wrapper)
+  - `btnTop (706/746) >= wrapperBottom (698/742)` → **botões fora da área de scroll** em todas as etapas
+  - `caretVisible: true` sempre; rolar o wrapper ao topo + digitar no fim → caret volta visível (scroll natural)
+
+### 16.5 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — wrapper com `mb-12` quando wrapped; pin removido do `onInput`.
+
+## 17. Copy com tool colapsada: conteúdo completo em qualquer seleção (feedback do usuário)
+
+### 17.1 Relato
+
+- Copiando uma seleção que ia **além da tool colapsada** (começava/percorria texto fora do card), o trecho da tool saía **incompleto — só até o `...`** do label (`bash <cmd>...`), em vez do conteúdo inteiro.
+
+### 17.2 Causa
+
+- O interceptador antigo vivia no `onCopy` **do próprio card** (§14.3.1) e desistia quando `cardRef.contains(range.commonAncestorContainer)` era falso — qualquer seleção que cruzasse a borda do card tinha nó comum no elemento pai → desistia → copia nativa copiava só o label truncado (o `...` é **literal** no label, `bash` >50 chars, §14.2).
+- Pior: seleção **começando fora** do card nem disparava o `onCopy` do card (o target do evento `copy` é o nó onde a seleção começa) — o fix precisava morar num ancestral da seleção inteira.
+
+### 17.3 Fix
+
+- Interceptação única em `useEffect` do `SessionPage`: `document.addEventListener("copy", …)` (removido o `onCopy`/`handleCopy` do `ToolCallItem`).
+- Cards colapsáveis ganham `data-tool-card`; um `Map<HTMLElement, () => string>` no escopo do módulo (`toolCardLines`) guarda a fábrica `() => toolExpandedLines(part).join("\n")` de cada card montado (registrada em `useEffect` do `ToolCallItem`, limpa no unmount — sem serializar outputs grandes em atributos).
+- Handler (bails em ordem):
+  1. target do evento em `input, textarea` → nativo (composer não é afetado; seleção de textarea nem aparece em `window.getSelection`)
+  2. sem seleção ou `isCollapsed` → nativo
+  3. cards registrados com `range.intersectsNode(card)`, `isConnected` e `aria-expanded !== "true"` (colapsados apenas), ordenados por posição no DOM → nenhum → nativo
+  4. `range.cloneRange()` (a seleção do usuário **não** é mutada) + `setStartBefore(cards[0])`/`setEndAfter(cards[last])` → o clone sempre contém os cards **inteiros**, mesmo com seleção parcial no meio do label
+  5. `cloneContents()` → `querySelectorAll("[data-tool-card]")` → pareia com os cards vivos por ordem (divergência de tamanho → nativo, safety) → substitui cada clone por um `<div>` com as linhas completas
+  6. fragmento renderizado num host off-screen (`position:fixed; left:-9999px; visibility:hidden`) → lê `host.innerText` (mesmo algoritmo do copy nativo: quebras de bloco, `pre` preservado) → remove host → `preventDefault()` + `clipboardData.setData("text/plain", text)`
+- Resultado: seleção que inclui 1+ tool(s) colapsada(s) — começando dentro, antes ou depois delas — sai com o conteúdo completo no lugar do label truncado, preservando o resto; **vários cards numa seleção** funcionam; cards expandidos e question cards não são tocados.
+
+### 17.4 Verificação
+
+- tsc: só os 3 erros pré-existentes. Build deployado: `index-BYyI1SDK.js` + chunk `_id-CaM7Wo-2.js` (contém `data-tool-card` e `intersectsNode`).
+- CDP (mobile 390x844 e desktop 1280x800): seleção cruzando um card `bash …...` → colar confere comando+output completos; seleção só dentro do card → conteúdo completo; seleção antes/atravessando/terminando no card → resto preservado; copy do composer → texto do composer.
+
+### 17.5 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — `data-tool-card` no card, `toolCardLines` (Map módulo), listener de `copy` no documento (SessionPage); removidos `handleCopy`/`onCopy` do `ToolCallItem` (§14.3.1 descontinuado).
+
+### 17.6 Correção: 3 bugs no handler + robustez (CDP headless)
+
+- **Bug 1 — clipboard sempre vazio**: o host off-screen usava `visibility:hidden` → o Chrome retorna `""` para `innerText` de conteúdo `visibility:hidden` (medido: 5 variações de CSS; só offscreen sem `visibility:hidden` funciona) → `preventDefault()` + `setData("text/plain", "")` → **nada copiado** em qualquer seleção com tool colapsada. Fix: host com `position:fixed;left:-9999px;top:0;pointer-events:none;white-space:pre;` + `aria-hidden` (o `white-space:pre` também evita soft-wraps espúrios do `innerText` no width do host, que o copy nativo não tem).
+- **Bug 2 — bail por target**: `event.target?.closest("input, textarea")` era contraproducente — com o textarea do composer **focado** mas seleção no chat, o target do evento é o textarea → bail → copy nativo copia a seleção vazia do textarea → nada. Fix: remover o bail por target; guard de seleção `!selection || selection.rangeCount === 0 || selection.isCollapsed` → return (preserva o copy do composer: seleção interna de textarea não aparece em `window.getSelection()`, `rangeCount === 0`; também evita `IndexSizeError` do `getRangeAt(0)` com seleção de documento vazia).
+- **Bug 3 — bail `clones.length !== cards.length` com card expandido na seleção**: o card expandido era filtrado de `cards` (predicado `aria-expanded`), mas o clone dele (root com `data-tool-card`) fica no fragmento → mismatch → bail → copy truncado. Fix: aplicar o **mesmo predicado aos clones** (`getAttribute("aria-expanded") !== "true"` — o atributo é clonado).
+- **Bug 4 — `setStartBefore/EndAfter` incondicionais descartavam texto anterior**: a seleção começando **antes** do card tinha o início do range movido para antes do card → o texto do usuário selecionado sumia da cópia (medido: seleção de 174 chars copiou só os 1092 da tool). Fix: extensão **condicional** — `if (firstCard.contains(range.startContainer)) range.setStartBefore(firstCard)` (idem para o fim com o último card).
+- **Refinamento**: `toolCardLines` virou `WeakMap` (GC, sem cleanup no unmount) e os cards passam a ser coletados com `document.querySelectorAll("[data-tool-card]")` (ordem de documento natural, sem comparator de sort, sem filtro `isConnected`); fallback `text || range.toString()` (1 linha, nunca mais clipboard vazio).
+- Verificação CDP (Chrome headless real, chunk `_id-kStVsVVh.js`): contido no card → conteúdo completo; spanning (prosa acima + card) → prosa **preservada** + tool completa; textarea focado + seleção no chat → conteúdo completo; copy do composer → nativo (não interceptado); colapsado+expandido na mesma seleção → conteúdo completo sem bail.
+
+### 17.7 Refinamento: pedaço da tool → nativo; até a reticência → conteúdo completo (feedback do usuário)
+
+- Relato: "copiando apenas um pedaço, já está copiando tudo" — o handler §17.6 expandia **qualquer** card colapsado que a seleção tocasse (`intersectsNode`), mesmo com 10 chars do label selecionados.
+- Fix: decisão **por card** (conjunto `expandable`) no lugar do filtro genérico, restaurando a semântica do §14.3.1:
+  1. `aria-expanded === "true"` ou fora do range (`!range.intersectsNode(card)`) → pulo
+  2. label via `[class*='truncate']`; sem label → pulo
+  3. **truncado**: `labelEl.scrollWidth > labelEl.clientWidth + 1 || labelEl.textContent?.endsWith("...")` — card não-truncado → nativo
+  4. **alcança a reticência** (mesmos números do §14.3.1, agora com o rect do range inteiro): `selRect.left < labelRight && selRect.right >= labelRight - 24` → `expandable`
+- `expandable` vazio → return (copy nativo). Extensão do range (`setStartBefore/EndAfter` condicionais) só em torno do 1º/último card **expandable**; pareamento: `clones` = todos os cards no fragmento (incl. expandidos) × `inRange` = cards vivos no range estendido, por ordem de documento, substituindo o clone **só** dos expandable.
+- Verificação CDP (chunk `_id-DoNj5gA-.js`): 10 chars do label → `prev:false` (nativo, só o pedaço); label inteiro / card inteiro / zona da reticência (últimos 8 chars) → conteúdo completo; spanning → prosa + tool; textarea focado → completo; composer → nativo; misto colapsado+expandido → completo.
+
+### 17.8 Trigger por caret (busca binária) — borda da caixa não é o fim do texto (feedback do usuário)
+
+- Relato: "não está sendo ativada quando selecionamos até encostar no ..., às vezes está acontecendo antes" — o check de 24px da §17.7 era instável.
+- **Causa (medida com drags reais via CDP)**: `labelEl.getBoundingClientRect().right` (borda da caixa) **não é o fim do texto** — dois casos extremos medidos:
+  - caixa mais larga que o texto (texto de 31 chars termina em 664.4, caixa vai até 708) → o caret máximo (664.4) ficava fora da zona de 24px (≥ 684) → **nunca disparava**
+  - caixa 0-width (`clientWidth: 0`, texto de 583px) → qualquer seleção passava do limiar → **disparava antes**
+  - sem tolerância fixa serve para ambos (diferenças medidas: 43.6px e -263px).
+- **Fix**: o trigger compara **posições de caret** (fim do texto real), não a borda da caixa:
+  - `cap` por card: **busca binária** no text node do label — maior offset `i` com `caretX(i) <= boxRight − 1` (última fronteira de caractere antes do clip; para texto que cabe, = fim do texto). ~log2(len) ranges construídos, desprezível.
+  - `selEndOnRow`: max right dos `range.getClientRects()` filtrados pela faixa-y do card (a linha do card) — direção-agnóstico; seleção que raspa o card (spanning) mostra só o pedaço na linha dele.
+  - trigger: `selEndOnRow >= cap − 4` (margem de subpixel; a fronteira anterior fica ~7px antes → separação limpa de "1 char antes").
+- Verificação CDP com **drags reais** (chunk `_id-BpseJFYL.js`; seleção limpa antes de cada drag — sem isso o resultado fica corrompido por seleção antiga):
+  - bash truncado: drag a 2 chars do cap → `prev:false`; no cap (offset da reticência) → completo (1092 chars); além da caixa → completo (40 chars do texto inteiro); parcial (10 chars) → nativo
+  - read clipado (67 chars, texto 482px > caixa 262px): 2 chars antes → nativo; no cap → completo (12640 chars); além → completo
+  - spanning (prosa acima + tool) → prosa preservada + tool completa; textarea focado → completo; composer → nativo; misto colapsado+expandido → completo (5586 chars)
+
+## 18. Sessões principais na lista + painel TASKS (hierarquia de sessões filhas)
+
+### 18.1 Relato
+
+- A lista de sessões (sidebar e home mobile) exibia **todas** as sessões, inclusive as filhas (criadas via `/fork` no composer) — poluindo a navegação.
+- Pedido: listar só as **principais** (`parentID` ausente); botão **TASKS** ao lado do Git (visível só com sessão aberta) abre painel lateral direito com a hierarquia da sessão atual — raiz + filhas aninhadas com chevrons — clicar navega para a sessão e fecha o painel.
+
+### 18.2 Decisão de arquitetura
+
+- **Sem endpoint novo**: `Session.parentID` já chega no `GET /sessions` e nos eventos SSE (`session.created/updated` — `use-opencode-events.ts` faz upsert da `Session` completa, que inclui `parentID`). A hierarquia é montada client-side a partir da cache `useSessions()` — funciona para qualquer backend que devolva `parentID` (o SDK v2 tem `session.children()`, mas não foi exposto: desnecessário).
+- Raiz: sobe por `parentID` a partir da sessão atual até o topo; se o pai não estiver na lista (órfã), o topo conhecido vira a raiz.
+- Filhos: `parentID === id`, ordenados por `time.updated` desc (mesmo critério do `sortSessions`).
+
+### 18.3 Implementação
+
+- `app-sidebar.tsx` — `mainSessions = sessions.filter(s => !s.parentID)` (useMemo) e map sobre ela.
+- `empty-state.tsx` — mesmo filtro no `length === 0` e no map (lista mobile).
+- `app-sidebar-nav.tsx`:
+  - botão **TASKS** (`ListTreeIcon` novo em `icons/lucide.tsx`, `createAppIcon(ListTree, "14px")`) renderizado só quando `sessionId` existe (`{sessionId && ...}`); Git continua com `isDisabled` como era.
+  - `<Sheet side="right">` mais largo (`className="sm:max-w-96"` — `sheetContentStyles` faz merge via tailwind-merge, vence o `sm:max-w-80` base) com `SheetHeader` (Title "Tasks" + description = título da raiz) e a árvore no body.
+  - `SessionTreeNode` recursivo: chevron (`ChevronDown/ChevronRight`) + botão de seleção; indentação `depth * 16px`; nós folha têm bolinha no lugar do chevron (alinhamento); sessão atual com `intent="secondary"`; colapso por `Set<string>` no estado do componente; `onSelect` navega (`/session/$id`) e fecha o Sheet.
+
+### 18.4 Verificação
+
+- tsc: só os 3 erros pré-existentes; build limpo.
+- CDP (mobile 390x844 + desktop 1280x800): `/fork` cria filha → some da sidebar/lista home; TASKS visível só com sessão aberta; painel mostra raiz+filhas aninhadas, chevrons colapsam/expandem, clique navega e fecha; Git intacto.
+
+### 18.5 Arquivos
+
+- `apps/web/src/components/app-sidebar.tsx` — filtro `mainSessions`.
+- `apps/web/src/components/empty-state.tsx` — filtro na lista mobile.
+- `apps/web/src/components/icons/lucide.tsx` — `ListTreeIcon`.
+- `apps/web/src/components/app-sidebar-nav.tsx` — botão TASKS, Sheet, `findRoot`/`childrenOf`/`SessionTreeNode`.
+
+
+
+

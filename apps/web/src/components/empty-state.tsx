@@ -35,6 +35,7 @@ export default function EmptyState() {
   const moveSession = useMoveSession();
 
   const sessions: Session[] = sessionsData ?? [];
+  const mainSessions = sessions.filter((session) => !session.parentID);
 
   const handleNewSession = useCallback(async () => {
     if (creating) return;
@@ -118,13 +119,13 @@ export default function EmptyState() {
             <p className="text-sm text-danger py-2">Error: {error.message}</p>
           )}
 
-          {!isLoading && !error && sessions.length === 0 && (
+          {!isLoading && !error && mainSessions.length === 0 && (
             <p className="text-sm text-muted-fg py-2">No sessions found</p>
           )}
 
-          {!isLoading && !error && sessions.length > 0 && (
+          {!isLoading && !error && mainSessions.length > 0 && (
             <ul className="space-y-1">
-              {sessions.map((session) => (
+              {mainSessions.map((session) => (
                 <li
                   key={session.id}
                   className="group relative flex items-center rounded-lg hover:bg-secondary/50 transition-colors"

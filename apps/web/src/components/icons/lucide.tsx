@@ -14,6 +14,7 @@ import {
   FileText,
   Folder,
   FolderInput,
+  GitBranch,
   GitPullRequest,
   Globe,
   GripVertical,
@@ -23,6 +24,7 @@ import {
   KeyRound,
   LifeBuoy,
   ListPlus,
+  ListTree,
   LogOut,
   MessageCircle,
   MessageSquare,
@@ -93,6 +95,7 @@ export const InformationCircleIcon = createAppIcon(Info);
 export const KeyIcon = createAppIcon(KeyRound);
 export const LifebuoyIcon = createAppIcon(LifeBuoy);
 export const ListPlusIcon = createAppIcon(ListPlus);export const MinusIcon = createAppIcon(Minus);
+export const ListTreeIcon = createAppIcon(ListTree, "14px");
 export const MoonIcon = createAppIcon(Moon);
 export const PanelLeftIcon = createAppIcon(PanelLeft);
 export const PaperclipIcon = createAppIcon(Paperclip);
@@ -110,6 +113,7 @@ export const IconBadgeSparkle = createAppIcon(Sparkles);
 export const IconBox = createAppIcon(Box, "18px");
 export const IconChat = createAppIcon(MessageCircle, "18px");
 export const IconEye = createAppIcon(Eye);
+export const IconGitBranch = createAppIcon(GitBranch, "18px");
 export const IconGitPullRequest = createAppIcon(GitPullRequest, "18px");
 export const IconGridPlus = createAppIcon(Grid2X2Plus, "18px");
 export const IconMagnifier = createAppIcon(Search);

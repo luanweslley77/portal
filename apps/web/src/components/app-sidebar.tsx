@@ -200,6 +200,10 @@ export default function AppSidebar(
   const updateSession = useUpdateSession();
   const moveSession = useMoveSession();
   const sessions: Session[] = sessionsData ?? [];
+  const mainSessions = useMemo(
+    () => sessions.filter((session) => !session.parentID),
+    [sessions],
+  );
 
   const { data: diffData } = useGitDiff();
   const diffFileCount = useMemo(() => {
@@ -301,7 +305,7 @@ export default function AppSidebar(
           </SidebarSection>
 
           <SidebarSection label="Sessions">
-            {sessions.map((session) => (
+            {mainSessions.map((session) => (
               <SidebarItem
                 key={session.id}
                 tooltip={session.title}

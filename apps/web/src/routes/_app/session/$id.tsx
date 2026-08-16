@@ -20,7 +20,9 @@ import { McpDialog } from "@/components/mcp-dialog";
 import { StatusDialog } from "@/components/status-dialog";
 import { useSlashCommand } from "@/hooks/use-slash-command";
 import { useCommands } from "@/hooks/use-commands";
+import useMediaQuery from "@/hooks/use-media-query";
 import {
+  ChevronDownIcon,
   IconBadgeSparkle,
   IconEye,
   IconMagnifier,
@@ -300,6 +302,230 @@ function formatToolCall(part: ToolPart): {
       };
     }
   }
+}
+
+function formatToolArgs(
+  input: Record<string, unknown>,
+  omit: string[] = [],
+): string {
+  const primitives = Object.entries(input).filter(([key, value]) => {
+    if (omit.includes(key)) return false;
+    return (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    );
+  });
+  if (primitives.length === 0) return "";
+  return `[${primitives
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(", ")}]`;
+}
+
+function formatToolInvocation(part: ToolPart): string {
+  const toolName = part.tool?.toLowerCase() || "";
+  const input = (part.state.input || {}) as Record<string, unknown>;
+
+  switch (toolName) {
+    case "bash":
+    case "shell":
+      return `$ ${String(input.command ?? "")}`.trim();
+    case "read": {
+      const filePath = input.filePath || input.file || "";
+      const args = formatToolArgs(input, ["filePath", "file"]);
+      return `Read ${filePath}${args ? ` ${args}` : ""}`.trim();
+    }
+    case "write":
+      return `Write ${String(input.filePath || input.file || "")}`.trim();
+    case "edit": {
+      const filePath = input.filePath || input.file || "";
+      const replaceAll =
+        input.replaceAll !== undefined
+          ? ` [replaceAll=${String(input.replaceAll)}]`
+          : "";
+      return `Edit ${filePath}${replaceAll}`.trim();
+    }
+    case "glob": {
+      const pattern = input.pattern || "";
+      const path = input.path;
+      return `Glob "${pattern}"${path ? ` in ${String(path)}` : ""}`.trim();
+    }
+    case "grep": {
+      const pattern = input.pattern || "";
+      const path = input.path;
+      return `Grep "${pattern}"${path ? ` in ${String(path)}` : ""}`.trim();
+    }
+    case "webfetch":
+      return `WebFetch ${String(input.url || "")}`.trim();
+    case "websearch":
+      return `WebSearch "${String(input.query || "")}"`.trim();
+    default: {
+      const args = formatToolArgs(input);
+      return `${part.tool || "tool"}${args ? ` ${args}` : ""}`.trim();
+    }
+  }
+}
+
+function toolMetadata(part: ToolPart): Record<string, unknown> {
+  return "metadata" in part.state && part.state.metadata
+    ? part.state.metadata
+    : {};
+}
+
+function parseTodoItems(input: Record<string, unknown>) {
+  const raw = input.todos;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const record = item as Record<string, unknown>;
+    const status = typeof record.status === "string" ? record.status : undefined;
+    const content =
+      typeof record.content === "string" ? record.content : undefined;
+    return status && content ? [{ status, content }] : [];
+  });
+}
+
+function parseApplyPatchFiles(part: ToolPart) {
+  const files = toolMetadata(part).files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const record = item as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type : undefined;
+    const relativePath =
+      typeof record.relativePath === "string"
+        ? record.relativePath
+        : undefined;
+    const patch = typeof record.patch === "string" ? record.patch : undefined;
+    const movePath =
+      typeof record.movePath === "string" ? record.movePath : undefined;
+    return type && relativePath && patch !== undefined
+      ? [{ type, relativePath, patch, movePath }]
+      : [];
+  });
+}
+
+function toolExpandedLines(part: ToolPart): string[] {
+  const toolName = part.tool?.toLowerCase() || "";
+  const input = (part.state.input || {}) as Record<string, unknown>;
+  const metadata = toolMetadata(part);
+  const output =
+    part.state.status === "completed" ? part.state.output : undefined;
+  const error = part.state.status === "error" ? part.state.error : undefined;
+  const lines: string[] = [];
+  let skipOutput = false;
+
+  switch (toolName) {
+    case "todowrite": {
+      const todos = parseTodoItems(input);
+      if (todos.length > 0) {
+        lines.push(
+          "Todos",
+          ...todos.map((todo) => {
+            const mark =
+              todo.status === "completed"
+                ? "✓"
+                : todo.status === "in_progress"
+                  ? "•"
+                  : " ";
+            return `[${mark}] ${todo.content}`;
+          }),
+        );
+        skipOutput = true;
+        break;
+      }
+      lines.push(formatToolInvocation(part));
+      break;
+    }
+    case "apply_patch": {
+      const files = parseApplyPatchFiles(part);
+      if (files.length > 0) {
+        lines.push(
+          "Patch",
+          ...files.flatMap((file) => {
+            const title =
+              file.type === "delete"
+                ? `Deleted ${file.relativePath}`
+                : file.type === "add"
+                  ? `Created ${file.relativePath}`
+                  : file.type === "move"
+                    ? `Moved ${file.movePath ?? file.relativePath} → ${file.relativePath}`
+                    : `Patched ${file.relativePath}`;
+            return [title, file.patch];
+          }),
+        );
+        skipOutput = true;
+        break;
+      }
+      lines.push("Patch");
+      break;
+    }
+    case "write": {
+      lines.push(formatToolInvocation(part));
+      const content = input.content;
+      if (typeof content === "string" && content.trim()) {
+        lines.push(content);
+      }
+      break;
+    }
+    case "edit": {
+      lines.push(formatToolInvocation(part));
+      const diff = metadata.diff;
+      if (typeof diff === "string" && diff.trim()) {
+        lines.push(diff);
+      }
+      break;
+    }
+    case "task": {
+      const description = input.description;
+      lines.push(
+        typeof description === "string" && description.trim()
+          ? `Task ${description}`
+          : formatToolInvocation(part),
+      );
+      break;
+    }
+    case "execute": {
+      lines.push("execute");
+      const calls = Array.isArray(metadata.toolCalls)
+        ? metadata.toolCalls
+        : [];
+      for (const call of calls) {
+        if (typeof call !== "object" || call === null) continue;
+        const record = call as Record<string, unknown>;
+        const tool = typeof record.tool === "string" ? record.tool : undefined;
+        if (!tool) continue;
+        const args = formatToolArgs(
+          (record.input ?? {}) as Record<string, unknown>,
+        );
+        lines.push(
+          `↳ ${tool}${args ? ` ${args}` : ""}${
+            record.status === "error" ? " (failed)" : ""
+          }`,
+        );
+      }
+      break;
+    }
+    case "skill": {
+      const name = input.name;
+      lines.push(
+        typeof name === "string" && name.trim()
+          ? `Skill "${name}"`
+          : formatToolInvocation(part),
+      );
+      break;
+    }
+    default:
+      lines.push(formatToolInvocation(part));
+  }
+
+  if (!skipOutput && output && output.trim()) {
+    lines.push(output);
+  }
+  if (error && error.trim()) {
+    lines.push(error);
+  }
+  return lines;
 }
 
 function QuestionDisplay({
@@ -668,6 +894,8 @@ function PermissionRequestForm({
   );
 }
 
+const toolCardLines = new WeakMap<HTMLElement, () => string>();
+
 const ToolCallItem = memo(function ToolCallItem({
   part,
   port,
@@ -683,6 +911,14 @@ const ToolCallItem = memo(function ToolCallItem({
   pendingQuestions: QuestionRequest[];
   onQuestionResolved: (requestId: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const pointerDownRef = useRef<{
+    x: number;
+    y: number;
+    hadSelection: boolean;
+  } | null>(null);
+  const clickTimerRef = useRef<number | null>(null);
   const { icon, label, details } = formatToolCall(part);
   const isQuestionTool = (part.tool || "").toLowerCase() === "question";
   const questions = isQuestionTool ? parseToolQuestions(part) : [];
@@ -691,6 +927,60 @@ const ToolCallItem = memo(function ToolCallItem({
   const isError = part.state.status === "error";
   const isPending =
     part.state.status === "pending" || part.state.status === "running";
+  const input = part.state.input as Record<string, unknown> | undefined;
+  const hasInput = !!input && Object.keys(input).length > 0;
+  const output =
+    part.state.status === "completed" ? part.state.output : undefined;
+  const error = part.state.status === "error" ? part.state.error : undefined;
+  const canExpand = hasInput || !!output || !!error;
+
+  const toggleImmediately = () => {
+    setExpanded((value) => !value);
+  };
+
+  const toggleExpanded = (
+    event?: React.MouseEvent | React.KeyboardEvent,
+  ) => {
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      return;
+    }
+    if (window.getSelection()?.toString()) return;
+    if (event && "detail" in event && event.detail > 1) return;
+    if (
+      pointerDownRef.current &&
+      event &&
+      "clientX" in event &&
+      "clientY" in event
+    ) {
+      if (pointerDownRef.current.hadSelection) return;
+      const dx = event.clientX - pointerDownRef.current.x;
+      const dy = event.clientY - pointerDownRef.current.y;
+      if (Math.hypot(dx, dy) > 4) return;
+    }
+    pointerDownRef.current = null;
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      setExpanded((value) => !value);
+    }, 250);
+  };
+
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current !== null) {
+        window.clearTimeout(clickTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el) {
+      toolCardLines.set(el, () => toolExpandedLines(part).join("\n"));
+    }
+  }, [part]);
 
   if (hasQuestions) {
     return (
@@ -735,20 +1025,75 @@ const ToolCallItem = memo(function ToolCallItem({
 
   return (
     <div
-      className={`font-mono text-xs flex items-center gap-1.5 py-0.5 min-w-0 ${
+      ref={cardRef}
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      data-tool-card
+      onClick={toggleExpanded}
+      onPointerDown={(event) => {
+        pointerDownRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          hadSelection: !!window.getSelection()?.toString(),
+        };
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (clickTimerRef.current !== null) {
+            window.clearTimeout(clickTimerRef.current);
+            clickTimerRef.current = null;
+          }
+          toggleImmediately();
+        }
+      }}
+      className={`cursor-pointer rounded-md border min-w-0 ${
         isError
-          ? "text-danger"
+          ? "border-danger/40 bg-danger-subtle/30"
           : isCompleted
-            ? "text-muted-fg"
+            ? "border-border bg-muted/25"
             : isPending
-              ? "text-warning"
-              : "text-fg"
+              ? "border-warning/40 bg-warning/10"
+              : "border-border bg-muted/25"
       }`}
     >
-      <span className="opacity-60 shrink-0">{icon}</span>
-      <span className="truncate">{label}</span>
-      {details && <span className="opacity-60 shrink-0">{details}</span>}
-      {isPending && <span className="animate-pulse shrink-0">...</span>}
+      {!expanded && (
+        <div
+          className={`w-full font-mono text-xs flex items-center gap-1.5 px-2.5 py-1 min-w-0 text-left ${
+            isError
+              ? "text-danger"
+              : isCompleted
+                ? "text-muted-fg"
+                : isPending
+                  ? "text-warning"
+                  : "text-fg"
+          }`}
+        >
+          <span className="opacity-60 shrink-0">{icon}</span>
+          <span className="truncate">{label}</span>
+          {details && <span className="opacity-60 shrink-0">{details}</span>}
+          {isPending && <span className="animate-pulse shrink-0">...</span>}
+          {canExpand && (
+            <ChevronDownIcon size="12px" className="ml-auto shrink-0" />
+          )}
+        </div>
+      )}
+      {expanded && (
+        <>
+          <pre
+            className={`max-w-full whitespace-pre-wrap break-words font-mono text-xs px-2.5 pt-2 pb-1 ${
+              isError ? "text-danger" : "text-muted-fg"
+            }`}
+          >
+            {toolExpandedLines(part).join("\n")}
+          </pre>
+          <div className="flex select-none items-center gap-1 px-2.5 pb-1.5 font-mono text-[11px] text-muted-fg/70">
+            <ChevronDownIcon size="12px" className="rotate-180 shrink-0" />
+            Click to collapse
+          </div>
+        </>
+      )}
     </div>
   );
 });
@@ -786,77 +1131,83 @@ const MessageItem = memo(function MessageItem({
   const hasMainContent = !!(textContent || messageError);
 
   return (
-    <div className="py-3 px-6">
+    <>
       {hasMainContent && (
-        <div className="flex gap-2">
-          {isAssistant ? (
-            <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
-          ) : (
-            <IconUser size="16px" className="shrink-0 mt-1" />
-          )}
-          <div className="flex-1 min-w-0">
-            {!isAssistant && message.isQueued && (
-              <Badge intent="warning" className="mb-1">
-                Queued
-              </Badge>
+        <div className="py-3 px-6">
+          <div className="flex gap-2">
+            {isAssistant ? (
+              <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
+            ) : (
+              <IconUser size="16px" className="shrink-0 mt-1" />
             )}
-            <div
-              className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
-            >
-              {textContent && (
-                <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+            <div className="flex-1 min-w-0">
+              {!isAssistant && message.isQueued && (
+                <Badge intent="warning" className="mb-1">
+                  Queued
+                </Badge>
+              )}
+              <div
+                className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
+              >
+                {textContent && (
+                  <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+                )}
+              </div>
+              {messageError && (
+                <ChatErrorAlert
+                  title="Message failed"
+                  message={messageError}
+                  className={textContent ? "mt-2" : ""}
+                />
               )}
             </div>
-            {messageError && (
-              <ChatErrorAlert
-                title="Message failed"
-                message={messageError}
-                className={textContent ? "mt-2" : ""}
-              />
+            {!isAssistant && !message.isQueued && !isOptimistic && onUndo && (
+              <button
+                type="button"
+                onClick={() => onUndo(message.info.id)}
+                className="shrink-0 mt-0.5 p-1 text-muted-fg hover:text-foreground transition-colors"
+                aria-label="Undo to this message"
+                title="Undo to this message"
+              >
+                <Undo2Icon size="15px" />
+              </button>
             )}
           </div>
-          {!isAssistant && !message.isQueued && !isOptimistic && onUndo && (
-            <button
-              type="button"
-              onClick={() => onUndo(message.info.id)}
-              className="shrink-0 mt-0.5 p-1 text-muted-fg hover:text-foreground transition-colors"
-              aria-label="Undo to this message"
-              title="Undo to this message"
-            >
-              <Undo2Icon size="15px" />
-            </button>
-          )}
         </div>
       )}
       {toolCalls.length > 0 && (
-        <div className={`${hasMainContent ? "mt-2 ml-6" : ""} space-y-0.5`}>
-          {toolCalls.map((part) => (
-            <ToolCallItem
-              key={part.callID || part.id}
-              part={part}
-              port={port}
-              provider={provider}
-              sessionId={sessionId}
-              pendingQuestions={pendingQuestions}
-              onQuestionResolved={onQuestionResolved}
-            />
-          ))}
+        <div className="py-3 px-6">
+          <div className="space-y-1">
+            {toolCalls.map((part) => (
+              <ToolCallItem
+                key={part.callID || part.id}
+                part={part}
+                port={port}
+                provider={provider}
+                sessionId={sessionId}
+                pendingQuestions={pendingQuestions}
+                onQuestionResolved={onQuestionResolved}
+              />
+            ))}
+          </div>
         </div>
       )}
       {messagePermissions.length > 0 && (
-        <div className={`${hasMainContent ? "mt-2 ml-6" : ""} space-y-2`}>
-          {messagePermissions.map((permission) => (
-            <PermissionRequestForm
-              key={permission.id}
-              permission={permission}
-              port={port}
-              provider={provider}
-              onResolved={onPermissionResolved}
-            />
-          ))}
+        <div className="py-3 px-6">
+          <div className="space-y-2">
+            {messagePermissions.map((permission) => (
+              <PermissionRequestForm
+                key={permission.id}
+                permission={permission}
+                port={port}
+                provider={provider}
+                onResolved={onPermissionResolved}
+              />
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 });
 
@@ -870,6 +1221,7 @@ function hasVisibleContent(message: MessageWithParts): boolean {
 
 function SessionPage() {
   const { id: sessionId } = Route.useParams();
+  const { isDesktop } = useMediaQuery();
   const instance = useInstanceStore((s) => s.instance);
   const port = instance?.port ?? 0;
   const provider = instance?.provider;
@@ -928,6 +1280,91 @@ function SessionPage() {
     }
     return () => setPageTitle(null);
   }, [currentSession?.title, setPageTitle]);
+
+  useEffect(() => {
+    const handleDocumentCopy = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        return;
+      }
+      const range = selection.getRangeAt(0).cloneRange();
+      const allCards = [
+        ...document.querySelectorAll<HTMLElement>("[data-tool-card]"),
+      ];
+      const rangeRects = [...range.getClientRects()];
+      const expandable = new Set<HTMLElement>();
+      for (const card of allCards) {
+        if (card.getAttribute("aria-expanded") === "true") continue;
+        if (!range.intersectsNode(card)) continue;
+        const labelEl = card.querySelector<HTMLElement>("[class*='truncate']");
+        if (!labelEl) continue;
+        const truncated =
+          labelEl.scrollWidth > labelEl.clientWidth + 1 ||
+          labelEl.textContent?.endsWith("...");
+        if (!truncated) continue;
+        const tn = [...labelEl.childNodes].find(
+          (n): n is Text => n.nodeType === Node.TEXT_NODE,
+        );
+        if (!tn || tn.data.length === 0) continue;
+        const cardRect = card.getBoundingClientRect();
+        const onRow = rangeRects.filter(
+          (rc) => rc.bottom > cardRect.top && rc.top < cardRect.bottom,
+        );
+        if (onRow.length === 0) continue;
+        const selEndOnRow = Math.max(...onRow.map((rc) => rc.right));
+        const boxRight = labelEl.getBoundingClientRect().right;
+        const caretX = (i: number) => {
+          const caretRange = document.createRange();
+          caretRange.setStart(tn, i);
+          caretRange.collapse(true);
+          return caretRange.getBoundingClientRect().left;
+        };
+        let lo = 0;
+        let hi = tn.data.length;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (caretX(mid) <= boxRight - 1) lo = mid;
+          else hi = mid - 1;
+        }
+        const cap = caretX(lo);
+        if (selEndOnRow < cap - 4) continue;
+        expandable.add(card);
+      }
+      if (expandable.size === 0) return;
+      const expandableCards = allCards.filter((card) => expandable.has(card));
+      const firstCard = expandableCards[0];
+      const lastCard = expandableCards[expandableCards.length - 1];
+      if (firstCard.contains(range.startContainer)) {
+        range.setStartBefore(firstCard);
+      }
+      if (lastCard.contains(range.endContainer)) {
+        range.setEndAfter(lastCard);
+      }
+      const fragment = range.cloneContents();
+      const clones = [...fragment.querySelectorAll("[data-tool-card]")];
+      const inRange = allCards.filter((card) => range.intersectsNode(card));
+      if (clones.length !== inRange.length) return;
+      inRange.forEach((card, i) => {
+        if (!expandable.has(card)) return;
+        const div = document.createElement("div");
+        div.textContent = toolCardLines.get(card)?.() ?? "";
+        clones[i].replaceWith(div);
+      });
+      const host = document.createElement("div");
+      host.setAttribute("aria-hidden", "true");
+      host.style.cssText =
+        "position:fixed;left:-9999px;top:0;pointer-events:none;white-space:pre;";
+      host.append(fragment);
+      document.body.append(host);
+      const text = host.innerText;
+      host.remove();
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text || range.toString());
+    };
+    document.addEventListener("copy", handleDocumentCopy);
+    return () => document.removeEventListener("copy", handleDocumentCopy);
+  }, []);
 
   useEffect(() => {
     if (!supportsAgentSelection) return;
@@ -1618,7 +2055,11 @@ function SessionPage() {
             </div>
           )}
           <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
-            <div className={`max-h-60 overflow-y-auto scroll-pb-2 ${wrapped ? "pb-12" : "pb-0"}`}>
+            <div
+              className={`max-h-60 overflow-y-auto scroll-pb-2 ${
+                wrapped ? "mb-12" : ""
+              }`}
+            >
             <Textarea
               ref={textareaRef}
               value={input}
@@ -1716,7 +2157,7 @@ function SessionPage() {
                   }
                   return;
                 }
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (isDesktop && e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   if (input.trim() && !submitLockRef.current) {
                     handleSubmit(e as unknown as React.FormEvent);

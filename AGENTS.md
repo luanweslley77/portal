@@ -103,3 +103,11 @@ Mensagens no padrão da sessão: `fix(web)`, `feat(web)`, `style(web)`, `docs:` 
 - Ao sobrescrever classes do componente base (ex: `ui/textarea.tsx` tem `sm:px/py` que vencem na cascade em ≥640px), usar **`!`** (important) no className do chamador — já causou bug real
 - Não usar python/pip diretamente (usar uv) — exceção: `~/.local/bin/portal-auth-patch.sh` (pronto, python3 embutido)
 - Dev: `bun dev` na raiz (turbo) ou `cd apps/web && bunx vite`
+
+## Regras de processo — cautela dobrada
+
+- **Não ir por atalhos**: validar com o gesto real do usuário (drag/touch reais, CDP), nunca só com seleção DOM sintética ou só `prev:true`/`len>0`.
+- **Considerar todos os casos antes de declarar pronto**: enumerar os cenários (parcial, borda/reticência, spanning, textarea focado, composer, múltiplos cards) e testar cada um — nenhum pode ficar de fora.
+- **Desconfiar de resultados bons demais ou idênticos demais**: antes de concluir, auditar o teste — a seleção era fresca? a geometria é a atual? o resultado bate com o valor esperado exato, não só "não-vazio"?
+- **Medir antes de editar**: comportamento dependente de API do browser (seleção/clipboard/geometria) → medir primeiro, depois mudar código.
+- **Consistência**: um único critério/handler para todos os casos; nenhuma heurística específica por caso sem evidência medida.
