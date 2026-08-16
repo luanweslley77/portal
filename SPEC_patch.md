@@ -761,12 +761,18 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 - tsc: só os 3 erros pré-existentes; build limpo.
 - CDP (mobile 390x844 + desktop 1280x800): `/fork` cria filha → some da sidebar/lista home; TASKS visível só com sessão aberta; painel mostra raiz+filhas aninhadas, chevrons colapsam/expandem, clique navega e fecha; Git intacto.
 
-### 18.5 Arquivos
+### 18.5 Polimento (feedback do usuário)
+
+- Contador do `/instances` mostrava o total com filhas (8) — agora `fetchSessionStats` (`apps/web/src/server/instances.ts`) filtra `parentID` antes de contar: `count`/`hasMore`/`lastUpdatedAt` usam só as principais (6), consistente com a sidebar.
+- Removido o `SheetDescription` com o título da raiz abaixo de "Tasks" no painel (redundante — a sessão já aparece no topo da árvore); import removido do `app-sidebar-nav.tsx`.
+
+### 18.6 Arquivos
 
 - `apps/web/src/components/app-sidebar.tsx` — filtro `mainSessions`.
 - `apps/web/src/components/empty-state.tsx` — filtro na lista mobile.
 - `apps/web/src/components/icons/lucide.tsx` — `ListTreeIcon`.
-- `apps/web/src/components/app-sidebar-nav.tsx` — botão TASKS, Sheet, `findRoot`/`childrenOf`/`SessionTreeNode`.
+- `apps/web/src/components/app-sidebar-nav.tsx` — botão TASKS, Sheet, `findRoot`/`childrenOf`/`SessionTreeNode`; §18.5: sem `SheetDescription`.
+- `apps/web/src/server/instances.ts` — §18.5: filtro `parentID` no `fetchSessionStats` (contador de principais no `/instances`).
 
 
 

@@ -7,7 +7,6 @@ import {
   Sheet,
   SheetBody,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -324,9 +323,6 @@ export function AppSidebarNav() {
         <SheetContent side="right" aria-label="Tasks" className="sm:max-w-96">
           <SheetHeader>
             <SheetTitle>Tasks</SheetTitle>
-            {rootSession && (
-              <SheetDescription>{rootSession.title}</SheetDescription>
-            )}
           </SheetHeader>
           <SheetBody className="gap-1">
             {isLoadingSessions ? (

@@ -386,9 +386,23 @@ async function fetchSessionStats(
 
   if (!sessions) return null;
 
-  const hasMore = sessions.length > SESSION_STATS_DISPLAY_LIMIT;
-  const count = hasMore ? SESSION_STATS_DISPLAY_LIMIT : sessions.length;
-  const lastUpdated = sessions[0] ? getSessionUpdatedAt(sessions[0]) : null;
+  const mainSessions = sessions.filter(
+    (session) =>
+      !(
+        session &&
+        typeof session === "object" &&
+        "parentID" in session &&
+        (session as { parentID?: string }).parentID
+      ),
+  );
+
+  const hasMore = mainSessions.length > SESSION_STATS_DISPLAY_LIMIT;
+  const count = hasMore
+    ? SESSION_STATS_DISPLAY_LIMIT
+    : mainSessions.length;
+  const lastUpdated = mainSessions[0]
+    ? getSessionUpdatedAt(mainSessions[0])
+    : null;
 
   return {
     count,
