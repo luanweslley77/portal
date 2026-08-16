@@ -1248,6 +1248,7 @@ function SessionPage() {
   const sessions: Session[] = sessionsData ?? [];
   const agents: Agent[] = agentsData ?? [];
   const currentSession = sessions.find((s) => s.id === sessionId);
+  const isChildSession = Boolean(currentSession?.parentID);
   const revertMessageID = currentSession?.revert?.messageID;
 
   const revertedMessages = useMemo(() => {
@@ -1948,7 +1949,11 @@ function SessionPage() {
                 pendingQuestions={pendingQuestions}
                 onPermissionResolved={handlePermissionResolved}
                 onQuestionResolved={handleQuestionResolved}
-                onUndo={(messageID) => void runBuiltinAction("undo", messageID)}
+                onUndo={
+                  isChildSession
+                    ? undefined
+                    : (messageID) => void runBuiltinAction("undo", messageID)
+                }
                 isOptimistic={optimisticMessageIDs.has(message.info.id)}
               />
             ))}
@@ -1959,13 +1964,15 @@ function SessionPage() {
                 {revertedMessages.length === 1 ? "message" : "messages"}{" "}
                 reverted
               </span>
-              <Button
-                size="sm"
-                intent="outline"
-                onPress={() => void runBuiltinAction("redo")}
-              >
-                Redo
-              </Button>
+              {!isChildSession && (
+                <Button
+                  size="sm"
+                  intent="outline"
+                  onPress={() => void runBuiltinAction("redo")}
+                >
+                  Redo
+                </Button>
+              )}
             </div>
           )}
           {unlinkedPermissions.length > 0 && (
@@ -1994,6 +2001,13 @@ function SessionPage() {
         )}
       </div>
 
+      {isChildSession ? (
+        <div className="border-t border-border px-4 py-3 shrink-0">
+          <p className="text-sm text-muted-fg">
+            Child session — read only. Open the parent session to continue.
+          </p>
+        </div>
+      ) : (
       <div className="border-t border-border p-3 pb-1 shrink-0 relative">
         <FileMentionPopover
           isOpen={fileMention.isOpen}
@@ -2234,6 +2248,7 @@ function SessionPage() {
           </div>
         </form>
       </div>
+      )}
       <McpDialog
         isOpen={dialog === "mcps"}
         onOpenChange={(open) => !open && setDialog(null)}

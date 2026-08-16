@@ -766,13 +766,22 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 - Contador do `/instances` mostrava o total com filhas (8) — agora `fetchSessionStats` (`apps/web/src/server/instances.ts`) filtra `parentID` antes de contar: `count`/`hasMore`/`lastUpdatedAt` usam só as principais (6), consistente com a sidebar.
 - Removido o `SheetDescription` com o título da raiz abaixo de "Tasks" no painel (redundante — a sessão já aparece no topo da árvore); import removido do `app-sidebar-nav.tsx`.
 
-### 18.6 Arquivos
+### 18.6 Sessões filhas: read-only (sem composer)
+
+- Relato: dentro de uma sessão filha não deve ser possível interagir por chat — remover o textarea e os selectors.
+- `$id.tsx`: `isChildSession = Boolean(currentSession?.parentID)` (cache `useSessions()`, sem request extra).
+- Composer inteiro (popovers + form + textarea + attach/send + `AgentSelect`/`ModelSelect`) vira condicional: filha → aviso discreto "Child session — read only. Open the parent session to continue."; principal → inalterado.
+- Undo por mensagem: `onUndo` vira `undefined` na filha (a seta só renderiza com a prop) e o botão Redo do bloco "reverted" também é ocultado (o texto informativo permanece).
+- Verificação CDP (mobile + desktop): filha sem textarea/selectors/undo/send/Redo + aviso; principal com tudo; tsc só com os 3 pré-existentes.
+
+### 18.7 Arquivos
 
 - `apps/web/src/components/app-sidebar.tsx` — filtro `mainSessions`.
 - `apps/web/src/components/empty-state.tsx` — filtro na lista mobile.
 - `apps/web/src/components/icons/lucide.tsx` — `ListTreeIcon`.
 - `apps/web/src/components/app-sidebar-nav.tsx` — botão TASKS, Sheet, `findRoot`/`childrenOf`/`SessionTreeNode`; §18.5: sem `SheetDescription`.
 - `apps/web/src/server/instances.ts` — §18.5: filtro `parentID` no `fetchSessionStats` (contador de principais no `/instances`).
+- `apps/web/src/routes/_app/session/$id.tsx` — §18.6: `isChildSession` (composer read-only + undo/redo ocultos na filha).
 
 
 
