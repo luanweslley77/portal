@@ -46,28 +46,18 @@ Vite + Nitro (preset `bun`, `nitro.config.ts`); saída em `apps/web/.output/` (s
 
 O `bunx openportal` **não baixa do npm**: executa o binário global `~/.bun/bin/openportal` (symlink → `~/.bun/install/global/node_modules/openportal/dist/index.js`), que serve a UI de `web/server` + `web/public` **do próprio pacote global**. Por isso o build copiado para lá é o que roda. (Só o CLI `dist/` permanece o original 0.1.32.)
 
+**Um comando faz build + copy + kill:**
+
 ```bash
-# 1. Copiar o build para o pacote global
-cd apps/web
-cp -r .output/server/. ~/.bun/install/global/node_modules/openportal/web/server/
-cp -r .output/public/assets/* ~/.bun/install/global/node_modules/openportal/web/public/assets/
+bash scripts/deploy.sh
+```
 
-# 2. Reaplicar o patch de auth (o build da main NÃO tem o fix do PR #54;
-#    os arquivos patchados são sobrescritos a cada build — sempre rodar)
-~/.local/bin/portal-auth-patch.sh
-
-# 3. Restart — matar os processos e subir de novo
-WEBPID=$(pgrep -f "openportal/web/server/index.mjs" | head -1)
-OPENPID=$(pgrep -f "opencode serve" | head -1)
-kill -9 $WEBPID $OPENPID 2>/dev/null
-sleep 2
-# Processos longos: usar term-cli (o bash tool mata no timeout)
+# Restart manual — subir de novo (processos longos: term-cli, o bash tool mata no timeout)
 term-cli run --session portal "bunx openportal" --timeout 20
 sleep 7
+curl -s http://localhost:3000/ | grep -oE 'src="[^"]+\.js"' | head -1  # hash mudou = build novo servido
 
-# 4. Verificar que o build novo está sendo servido (o hash muda a cada build)
-curl -s http://localhost:3000/ | grep -oE 'src="[^"]+\.js"' | head -1
-```
+> **Auth (Basic Auth)**: nativo no fonte desde o merge de `fix/basic-auth-support` (`a5815bd`) — lê `OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD` em `instances.ts` e `opencode-client.ts`. **NÃO precisa mais do `~/.local/bin/portal-auth-patch.sh`** pós-build; se rodar por engano, é inofensivo (idempotente).
 
 ### 5. Validação visual (chrome devtools)
 
@@ -101,7 +91,7 @@ Mensagens no padrão da sessão: `fix(web)`, `feat(web)`, `style(web)`, `docs:` 
 
 - TypeScript em tudo; componentes em `apps/web/src/components/`; Tailwind; alias `@/` → `apps/web/src`
 - Ao sobrescrever classes do componente base (ex: `ui/textarea.tsx` tem `sm:px/py` que vencem na cascade em ≥640px), usar **`!`** (important) no className do chamador — já causou bug real
-- Não usar python/pip diretamente (usar uv) — exceção: `~/.local/bin/portal-auth-patch.sh` (pronto, python3 embutido)
+- Não usar python/pip diretamente (usar uv)
 - Dev: `bun dev` na raiz (turbo) ou `cd apps/web && bunx vite`
 
 ## Regras de processo — cautela dobrada
