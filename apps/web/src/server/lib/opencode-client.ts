@@ -43,6 +43,7 @@ function getAuthHeaders(): Record<string, string> | undefined {
       Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
     };
   }
+  return undefined;
 }
 
 export function getOpencodeClient(port: number) {
