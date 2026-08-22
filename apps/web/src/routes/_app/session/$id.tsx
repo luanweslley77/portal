@@ -1403,7 +1403,7 @@ function SessionPage() {
   const prevMessagesLengthRef = useRef(0);
   const fileMention = useFileMention();
   const slashCommand = useSlashCommand();
-  const { commands } = useCommands();
+  const { commands } = useCommands(currentSession?.directory);
 
   useEffect(() => {
     const t = textareaRef.current;

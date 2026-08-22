@@ -35,9 +35,11 @@ function useBackend() {
     : null;
 }
 
-export function useCommands() {
+export function useCommands(directory?: string) {
   const backend = useBackend();
-  const key = backend ? `${backend.basePath}/command` : null;
+  const isOpencode = !backend || backend.provider === undefined || backend.provider === "opencode";
+  const qs = directory ? `?directory=${encodeURIComponent(directory)}` : "";
+  const key = backend && isOpencode ? `${backend.basePath}/command${qs}` : null;
 
   const { data, error, isLoading } = useSWR<SlashCommand[]>(key, fetcher, {
     revalidateOnFocus: false,
