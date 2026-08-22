@@ -29,7 +29,8 @@ if [[ -n "${WEBPID:-}" || -n "${OPENPID:-}" ]]; then
   sleep 2
 fi
 
-NEW_HASH=$(grep -oE 'src="[^"]+\.js"' .output/public/index.html | head -1 || true)
+NEW_HASH=$(grep -rhoE 'index-[A-Za-z0-9_-]+\.js' "$GLOBAL_WEB/public/assets" 2>/dev/null | head -1 || true)
 echo
-echo "Deploy concluído. Asset novo: ${NEW_HASH:-?}"
+echo "Deploy concluído. Bundle principal: ${NEW_HASH:-?}"
 echo "Subir com: term-cli run --session portal \"bunx openportal\" --timeout 20"
+echo "Verificar depois de subir: curl -s http://localhost:3000/ | grep -oE 'src=\"[^\"]+\\.js\"' | head -1"
