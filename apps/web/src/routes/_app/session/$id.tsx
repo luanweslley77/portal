@@ -1,5 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Ripples } from "ldrs/react";
@@ -19,7 +27,7 @@ import { CommandPopover } from "@/components/command-popover";
 import { McpDialog } from "@/components/mcp-dialog";
 import { StatusDialog } from "@/components/status-dialog";
 import { useSlashCommand } from "@/hooks/use-slash-command";
-import { useCommands } from "@/hooks/use-commands";
+import { useCommands, type SlashCommand } from "@/hooks/use-commands";
 import useMediaQuery from "@/hooks/use-media-query";
 import {
   ChevronDownIcon,
@@ -1098,6 +1106,21 @@ const ToolCallItem = memo(function ToolCallItem({
   );
 });
 
+const markdownPlugins = [remarkGfm];
+
+const cvSkipLayout = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "auto 150px",
+} as React.CSSProperties;
+
+const MemoizedMarkdown = memo(function MemoizedMarkdown({
+  content,
+}: {
+  content: string;
+}) {
+  return <Markdown remarkPlugins={markdownPlugins}>{content}</Markdown>;
+});
+
 const MessageItem = memo(function MessageItem({
   message,
   port,
@@ -1133,7 +1156,7 @@ const MessageItem = memo(function MessageItem({
   return (
     <>
       {hasMainContent && (
-        <div className="py-3 px-6">
+        <div className="py-3 px-6" style={cvSkipLayout}>
           <div className="flex gap-2">
             {isAssistant ? (
               <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
@@ -1149,9 +1172,7 @@ const MessageItem = memo(function MessageItem({
               <div
                 className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
               >
-                {textContent && (
-                  <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
-                )}
+                {textContent && <MemoizedMarkdown content={textContent} />}
               </div>
               {messageError && (
                 <ChatErrorAlert
@@ -1176,7 +1197,7 @@ const MessageItem = memo(function MessageItem({
         </div>
       )}
       {toolCalls.length > 0 && (
-        <div className="py-3 px-6">
+        <div className="py-3 px-6" style={cvSkipLayout}>
           <div className="space-y-1">
             {toolCalls.map((part) => (
               <ToolCallItem
@@ -1193,7 +1214,7 @@ const MessageItem = memo(function MessageItem({
         </div>
       )}
       {messagePermissions.length > 0 && (
-        <div className="py-3 px-6">
+        <div className="py-3 px-6" style={cvSkipLayout}>
           <div className="space-y-2">
             {messagePermissions.map((permission) => (
               <PermissionRequestForm
@@ -1218,6 +1239,316 @@ function hasVisibleContent(message: MessageWithParts): boolean {
     message.info.role === "assistant" ? getAssistantError(message) : null;
   return !!(textContent || hasToolCalls || messageError);
 }
+
+const SessionComposer = memo(function SessionComposer({
+  sessionId,
+  port,
+  commands,
+  isDesktop,
+  sending,
+  isSubmitting,
+  sendError,
+  attachments,
+  supportsAgentSelection,
+  submitLockRef,
+  onSubmit,
+  onAttachFiles,
+  onRemoveAttachment,
+}: {
+  sessionId: string;
+  port: number;
+  commands: SlashCommand[];
+  isDesktop: boolean;
+  sending: boolean;
+  isSubmitting: boolean;
+  sendError: string | null;
+  attachments: Attachment[];
+  supportsAgentSelection: boolean;
+  submitLockRef: { current: boolean };
+  onSubmit: (messageText: string, attachments: Attachment[]) => void;
+  onAttachFiles: (files: File[]) => void;
+  onRemoveAttachment: (id: string) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [wrapped, setWrapped] = useState(false);
+  const [fileResults, setFileResults] = useState<string[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const measureRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileMention = useFileMention();
+  const slashCommand = useSlashCommand();
+
+  const deferredInput = useDeferredValue(input);
+  useEffect(() => {
+    const t = textareaRef.current;
+    const m = measureRef.current;
+    if (!t || !m) return;
+    const cs = getComputedStyle(t);
+    const wrapperEl = t.parentElement?.parentElement;
+    const larguraCampo = wrapperEl?.clientWidth ?? t.clientWidth;
+    m.value = deferredInput;
+    m.style.width = `${Math.max(100, larguraCampo - 96)}px`;
+    m.style.lineHeight = cs.lineHeight;
+    m.style.fontSize = cs.fontSize;
+    m.style.fontFamily = cs.fontFamily;
+    m.style.padding = "0";
+    m.style.border = "0";
+    const linhas = Math.round(m.scrollHeight / parseFloat(cs.lineHeight));
+    setWrapped(linhas > 1);
+  }, [deferredInput]);
+
+  const submit = () => {
+    if (!sessionId || !port || submitLockRef.current) return;
+    const messageText = input.trim();
+    if (!messageText && attachments.length === 0) return;
+    onSubmit(messageText, attachments);
+    setInput("");
+  };
+
+  return (
+    <div className="border-t border-border p-3 pb-1 shrink-0 relative">
+      <FileMentionPopover
+        isOpen={fileMention.isOpen}
+        searchQuery={fileMention.searchQuery}
+        textareaRef={textareaRef}
+        mentionStart={fileMention.mentionStart}
+        selectedIndex={fileMention.selectedIndex}
+        onSelectedIndexChange={fileMention.setSelectedIndex}
+        onFilesChange={setFileResults}
+        onClose={fileMention.close}
+        onSelect={(filePath) => {
+          const newValue = fileMention.handleSelect(filePath, input);
+          setInput(newValue);
+        }}
+      />
+      <CommandPopover
+        isOpen={slashCommand.isOpen}
+        trigger={slashCommand.trigger}
+        searchQuery={slashCommand.searchQuery}
+        selectedIndex={slashCommand.selectedIndex}
+        commands={commands}
+        textareaRef={textareaRef}
+        onClose={slashCommand.close}
+        onSelectedIndexChange={slashCommand.setSelectedIndex}
+        onSelect={(value) => {
+          const newValue = slashCommand.handleSelect(value, input);
+          setInput(newValue);
+        }}
+      />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="w-full"
+      >
+        {sendError && (
+          <ChatErrorAlert
+            title="Message failed"
+            message={sendError}
+            className="mb-3"
+          />
+        )}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.id}
+                className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary/40 py-0.5 pl-2.5 pr-1 text-xs text-fg"
+              >
+                <span className="truncate">{attachment.name}</span>
+                <span className="shrink-0 text-[10px] text-muted-fg">
+                  {formatFileSize(attachment.size)}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.name}`}
+                  className="shrink-0 rounded-full p-0.5 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                >
+                  <XMarkIcon className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
+          <div
+            className={`max-h-60 overflow-y-auto scroll-pb-2 ${
+              wrapped ? "mb-12" : ""
+            }`}
+          >
+            <Textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => {
+                const value = e.target.value;
+                setInput(value);
+                const cursorPos = e.target.selectionStart ?? value.length;
+                slashCommand.handleInputChange(value, cursorPos, commands);
+                if (fileMention.isOpen || value.includes("@")) {
+                  fileMention.handleInputChange(value, cursorPos);
+                }
+              }}
+              onSelect={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                if (fileMention.isOpen || input.includes("@")) {
+                  const cursorPos = target.selectionStart ?? input.length;
+                  fileMention.handleInputChange(input, cursorPos);
+                }
+              }}
+              onKeyDown={(e) => {
+                const handledSlash = slashCommand.handleKeyDown(
+                  e,
+                  slashCommand.trigger === "slash"
+                    ? commands.filter(
+                        (command) =>
+                          command.name
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()) ||
+                          (command.description ?? "")
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()),
+                      ).length
+                    : 1,
+                );
+                if (handledSlash) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    slashCommand.isOpen
+                  ) {
+                    const list =
+                      slashCommand.trigger === "slash"
+                        ? commands.filter(
+                            (command) =>
+                              command.name
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ) ||
+                              (command.description ?? "")
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ),
+                          )
+                        : [{ name: "" }];
+                    const selected = list[slashCommand.selectedIndex];
+                    if (selected) {
+                      const newValue = slashCommand.handleSelect(
+                        slashCommand.trigger === "bang"
+                          ? "!"
+                          : `/${selected.name}`,
+                        input,
+                      );
+                      setInput(newValue);
+                    }
+                  }
+                  return;
+                }
+                const handled = fileMention.handleKeyDown(
+                  e,
+                  fileResults.length,
+                );
+                if (handled) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    fileResults.length > 0
+                  ) {
+                    const selectedFile = fileResults[fileMention.selectedIndex];
+                    if (selectedFile) {
+                      const newValue = fileMention.handleSelect(
+                        selectedFile,
+                        input,
+                      );
+                      setInput(newValue);
+                    }
+                  }
+                  return;
+                }
+                if (isDesktop && e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (input.trim() && !submitLockRef.current) {
+                    submit();
+                  }
+                }
+              }}
+              onBlur={() => slashCommand.close()}
+              placeholder="Type a message... (use @ for files)"
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
+              rows={5}
+            />
+          </div>
+          <button
+            type="button"
+            aria-label="Attach files"
+            className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <PaperclipIcon />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept={ACCEPTED_ATTACHMENT_MIMES}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              onAttachFiles(files);
+            }}
+          />
+          {(input.trim() || attachments.length > 0) && (
+            <Button
+              type="submit"
+              isDisabled={
+                (!input.trim() && attachments.length === 0) || isSubmitting
+              }
+              isCircle
+              size="sq-sm"
+              aria-label={
+                isSubmitting
+                  ? "Sending message"
+                  : sending
+                    ? "Queue message"
+                    : "Send message"
+              }
+              className="absolute right-2 bottom-1"
+            >
+              {isSubmitting ? (
+                <span className="grid size-4 place-items-center">
+                  <Loader className="size-4" aria-label="Sending message" />
+                </span>
+              ) : sending ? (
+                <span className="grid size-4 place-items-center">
+                  <ListPlusIcon size="16px" />
+                </span>
+              ) : (
+                <span className="grid size-4 place-items-center">
+                  <SendIcon size="16px" />
+                </span>
+              )}
+            </Button>
+          )}
+          <textarea
+            ref={measureRef}
+            aria-hidden="true"
+            tabIndex={-1}
+            readOnly
+            rows={1}
+            className="invisible pointer-events-none absolute left-0 top-0 h-auto resize-none overflow-hidden"
+          />
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
+          <ModelSelect />
+        </div>
+      </form>
+    </div>
+  );
+});
 
 function SessionPage() {
   const { id: sessionId } = Route.useParams();
@@ -1274,6 +1605,11 @@ function SessionPage() {
     }
     return ids;
   }, [sessionMessages]);
+
+  const displayMessages = useMemo(
+    () => visibleMessages.filter((message) => hasVisibleContent(message)),
+    [visibleMessages],
+  );
 
   useEffect(() => {
     if (currentSession?.title) {
@@ -1385,43 +1721,17 @@ function SessionPage() {
   ]);
 
   const [sendError, setSendError] = useState<string | null>(null);
-  const [input, setInput] = useState("");
-  const [wrapped, setWrapped] = useState(false);
   const [dialog, setDialog] = useState<"mcps" | "status" | null>(null);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
-  const [fileResults, setFileResults] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const measureRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const submitLockRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const prevMessagesLengthRef = useRef(0);
-  const fileMention = useFileMention();
-  const slashCommand = useSlashCommand();
   const { commands } = useCommands(currentSession?.directory);
-
-  useEffect(() => {
-    const t = textareaRef.current;
-    const m = measureRef.current;
-    if (!t || !m) return;
-    const cs = getComputedStyle(t);
-    const wrapperEl = t.parentElement?.parentElement;
-    const larguraCampo = wrapperEl?.clientWidth ?? t.clientWidth;
-    m.value = input;
-    m.style.width = `${Math.max(100, larguraCampo - 96)}px`;
-    m.style.lineHeight = cs.lineHeight;
-    m.style.fontSize = cs.fontSize;
-    m.style.fontFamily = cs.fontFamily;
-    m.style.padding = "0";
-    m.style.border = "0";
-    const linhas = Math.round(m.scrollHeight / parseFloat(cs.lineHeight));
-    setWrapped(linhas > 1);
-  }, [input]);
 
   const messagesLoadError = messagesError?.message;
 
@@ -1712,24 +2022,101 @@ function SessionPage() {
     ],
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const messageText = input.trim();
-    if (
-      (!messageText && attachments.length === 0) ||
-      !sessionId ||
-      !port ||
-      submitLockRef.current
-    ) {
-      return;
-    }
+  const handleUndoMessage = useCallback(
+    (messageID: string) => {
+      void runBuiltinAction("undo", messageID);
+    },
+    [runBuiltinAction],
+  );
 
-    const wasSending = sending;
-    submitLockRef.current = true;
-    setIsSubmitting(true);
-    const messageId = createClientMessageId();
-    setInput("");
-    setSendError(null);
+  const sharedListProps = useMemo(
+    () => ({
+      port,
+      provider,
+      sessionId,
+      pendingPermissions,
+      pendingQuestions,
+      optimisticMessageIDs,
+      onPermissionResolved: handlePermissionResolved,
+      onQuestionResolved: handleQuestionResolved,
+      onUndo: isChildSession ? undefined : handleUndoMessage,
+    }),
+    [
+      port,
+      provider,
+      sessionId,
+      pendingPermissions,
+      pendingQuestions,
+      optimisticMessageIDs,
+      handlePermissionResolved,
+      handleQuestionResolved,
+      isChildSession,
+      handleUndoMessage,
+    ],
+  );
+
+  const messageItemCache = useRef(
+    new Map<
+      string,
+      {
+        shared: typeof sharedListProps;
+        message: MessageWithParts;
+        el: React.ReactElement;
+      }
+    >(),
+  );
+
+  const messageNodes: React.ReactElement[] = [];
+  for (const message of displayMessages) {
+    const id = message.info.id;
+    const entry = messageItemCache.current.get(id);
+    if (entry && entry.shared === sharedListProps && entry.message === message) {
+      messageNodes.push(entry.el);
+      continue;
+    }
+    const el = (
+      <MessageItem
+        key={id}
+        message={message}
+        port={sharedListProps.port}
+        provider={sharedListProps.provider}
+        sessionId={sharedListProps.sessionId}
+        pendingPermissions={sharedListProps.pendingPermissions}
+        pendingQuestions={sharedListProps.pendingQuestions}
+        onPermissionResolved={sharedListProps.onPermissionResolved}
+        onQuestionResolved={sharedListProps.onQuestionResolved}
+        onUndo={sharedListProps.onUndo}
+        isOptimistic={sharedListProps.optimisticMessageIDs.has(id)}
+      />
+    );
+    messageItemCache.current.set(id, { shared: sharedListProps, message, el });
+    messageNodes.push(el);
+  }
+  if (messageItemCache.current.size > displayMessages.length * 1.5) {
+    const live = new Set(displayMessages.map((m) => m.info.id));
+    for (const key of messageItemCache.current.keys()) {
+      if (!live.has(key)) messageItemCache.current.delete(key);
+    }
+  }
+
+
+  const submitComposerMessage = useCallback(
+    async (rawText: string, composerAttachments: Attachment[]) => {
+      const messageText = rawText.trim();
+      if (
+        (!messageText && composerAttachments.length === 0) ||
+        !sessionId ||
+        !port ||
+        submitLockRef.current
+      ) {
+        return;
+      }
+
+      const wasSending = sending;
+      submitLockRef.current = true;
+      setIsSubmitting(true);
+      const messageId = createClientMessageId();
+      setSendError(null);
 
     const isShellCommand = messageText.startsWith("!");
     const firstLine = messageText.split("\n")[0];
@@ -1806,7 +2193,7 @@ function SessionPage() {
     }
 
     const optimisticParts: Part[] = [
-      ...attachments.map((attachment) => ({
+      ...composerAttachments.map((attachment) => ({
         id: `${messageId}-part-${attachment.id}`,
         sessionID: sessionId,
         messageID: messageId,
@@ -1840,7 +2227,7 @@ function SessionPage() {
     };
     addOptimisticMessage(port, sessionId, optimisticMessage, provider);
 
-    const messageAttachments = attachments;
+    const messageAttachments = composerAttachments;
     setAttachments([]);
 
     void sendMessage(messageText, messageId, messageAttachments).finally(
@@ -1852,7 +2239,18 @@ function SessionPage() {
 
     isNearBottomRef.current = true;
     scrollToBottom();
-  };
+    },
+    [
+      sending,
+      sessionId,
+      port,
+      apiBase,
+      commands,
+      runBuiltinAction,
+      sendMessage,
+      scrollToBottom,
+    ],
+  );
 
   useEffect(() => {
     submitLockRef.current = false;
@@ -1869,9 +2267,7 @@ function SessionPage() {
     return () => window.clearInterval(interval);
   }, [port, provider, sending, sessionId]);
 
-  const handleAttachFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
+  const handleAttachFiles = useCallback((files: File[]) => {
     for (const file of files) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         toast.error(
@@ -1902,11 +2298,11 @@ function SessionPage() {
         })
         .catch(() => toast.error(`Failed to read ${file.name}`));
     }
-  };
+  }, []);
 
-  const removeAttachment = (id: string) => {
+  const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
-  };
+  }, []);
 
   return (
     <div
@@ -1936,27 +2332,7 @@ function SessionPage() {
         )}
 
         <div className="divide-y divide-dashed divide-border overflow-x-hidden">
-          {visibleMessages
-            .filter((message) => hasVisibleContent(message))
-            .map((message) => (
-              <MessageItem
-                key={message.info.id}
-                message={message}
-                port={port}
-                provider={provider}
-                sessionId={sessionId}
-                pendingPermissions={pendingPermissions}
-                pendingQuestions={pendingQuestions}
-                onPermissionResolved={handlePermissionResolved}
-                onQuestionResolved={handleQuestionResolved}
-                onUndo={
-                  isChildSession
-                    ? undefined
-                    : (messageID) => void runBuiltinAction("undo", messageID)
-                }
-                isOptimistic={optimisticMessageIDs.has(message.info.id)}
-              />
-            ))}
+          {messageNodes}
           {revertedMessages.length > 0 && (
             <div className="flex items-center justify-between gap-3 px-6 py-4">
               <span className="text-sm text-muted-fg">
@@ -2008,246 +2384,21 @@ function SessionPage() {
           </p>
         </div>
       ) : (
-      <div className="border-t border-border p-3 pb-1 shrink-0 relative">
-        <FileMentionPopover
-          isOpen={fileMention.isOpen}
-          searchQuery={fileMention.searchQuery}
-          textareaRef={textareaRef}
-          mentionStart={fileMention.mentionStart}
-          selectedIndex={fileMention.selectedIndex}
-          onSelectedIndexChange={fileMention.setSelectedIndex}
-          onFilesChange={setFileResults}
-          onClose={fileMention.close}
-          onSelect={(filePath) => {
-            const newValue = fileMention.handleSelect(filePath, input);
-            setInput(newValue);
-          }}
-        />
-        <CommandPopover
-          isOpen={slashCommand.isOpen}
-          trigger={slashCommand.trigger}
-          searchQuery={slashCommand.searchQuery}
-          selectedIndex={slashCommand.selectedIndex}
-          commands={commands}
-          textareaRef={textareaRef}
-          onClose={slashCommand.close}
-          onSelectedIndexChange={slashCommand.setSelectedIndex}
-          onSelect={(value) => {
-            const newValue = slashCommand.handleSelect(value, input);
-            setInput(newValue);
-          }}
-        />
-        <form onSubmit={handleSubmit} className="w-full">
-          {sendError && (
-            <ChatErrorAlert
-              title="Message failed"
-              message={sendError}
-              className="mb-3"
-            />
-          )}
-          {attachments.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {attachments.map((attachment) => (
-                <span
-                  key={attachment.id}
-                  className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary/40 py-0.5 pl-2.5 pr-1 text-xs text-fg"
-                >
-                  <span className="truncate">{attachment.name}</span>
-                  <span className="shrink-0 text-[10px] text-muted-fg">
-                    {formatFileSize(attachment.size)}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Remove ${attachment.name}`}
-                    className="shrink-0 rounded-full p-0.5 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => removeAttachment(attachment.id)}
-                  >
-                    <XMarkIcon className="size-3" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
-            <div
-              className={`max-h-60 overflow-y-auto scroll-pb-2 ${
-                wrapped ? "mb-12" : ""
-              }`}
-            >
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                const value = e.target.value;
-                setInput(value);
-                const cursorPos = e.target.selectionStart ?? value.length;
-                slashCommand.handleInputChange(value, cursorPos, commands);
-                if (fileMention.isOpen || value.includes("@")) {
-                  fileMention.handleInputChange(value, cursorPos);
-                }
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                const value = target.value;
-                const cursorPos = target.selectionStart ?? value.length;
-                slashCommand.handleInputChange(value, cursorPos, commands);
-                if (value.includes("@")) {
-                  fileMention.handleInputChange(value, cursorPos);
-                }
-              }}
-              onSelect={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                if (fileMention.isOpen || input.includes("@")) {
-                  const cursorPos = target.selectionStart ?? input.length;
-                  fileMention.handleInputChange(input, cursorPos);
-                }
-              }}
-              onKeyDown={(e) => {
-                const handledSlash = slashCommand.handleKeyDown(
-                  e,
-                  slashCommand.trigger === "slash"
-                    ? commands.filter(
-                        (command) =>
-                          command.name
-                            .toLowerCase()
-                            .includes(slashCommand.searchQuery.toLowerCase()) ||
-                          (command.description ?? "")
-                            .toLowerCase()
-                            .includes(slashCommand.searchQuery.toLowerCase()),
-                      ).length
-                    : 1,
-                );
-                if (handledSlash) {
-                  if (
-                    (e.key === "Enter" || e.key === "Tab") &&
-                    slashCommand.isOpen
-                  ) {
-                    const list =
-                      slashCommand.trigger === "slash"
-                        ? commands.filter(
-                            (command) =>
-                              command.name
-                                .toLowerCase()
-                                .includes(
-                                  slashCommand.searchQuery.toLowerCase(),
-                                ) ||
-                              (command.description ?? "")
-                                .toLowerCase()
-                                .includes(
-                                  slashCommand.searchQuery.toLowerCase(),
-                                ),
-                          )
-                        : [{ name: "" }];
-                    const selected = list[slashCommand.selectedIndex];
-                    if (selected) {
-                      const newValue = slashCommand.handleSelect(
-                        slashCommand.trigger === "bang"
-                          ? "!"
-                          : `/${selected.name}`,
-                        input,
-                      );
-                      setInput(newValue);
-                    }
-                  }
-                  return;
-                }
-                const handled = fileMention.handleKeyDown(
-                  e,
-                  fileResults.length,
-                );
-                if (handled) {
-                  if (
-                    (e.key === "Enter" || e.key === "Tab") &&
-                    fileResults.length > 0
-                  ) {
-                    const selectedFile = fileResults[fileMention.selectedIndex];
-                    if (selectedFile) {
-                      const newValue = fileMention.handleSelect(
-                        selectedFile,
-                        input,
-                      );
-                      setInput(newValue);
-                    }
-                  }
-                  return;
-                }
-                if (isDesktop && e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (input.trim() && !submitLockRef.current) {
-                    handleSubmit(e as unknown as React.FormEvent);
-                  }
-                }
-              }}
-              onBlur={() => slashCommand.close()}
-              placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
-              rows={5}
-            />
-            </div>
-            <button
-              type="button"
-              aria-label="Attach files"
-              className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <PaperclipIcon />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              hidden
-              accept={ACCEPTED_ATTACHMENT_MIMES}
-              onChange={handleAttachFiles}
-            />
-            {(input.trim() || attachments.length > 0) && (
-              <Button
-                type="submit"
-                isDisabled={
-                  (!input.trim() && attachments.length === 0) || isSubmitting
-                }
-                isCircle
-                size="sq-sm"
-                aria-label={
-                  isSubmitting
-                    ? "Sending message"
-                    : sending
-                      ? "Queue message"
-                      : "Send message"
-                }
-                className="absolute right-2 bottom-1"
-              >
-                {isSubmitting ? (
-                  <span className="grid size-4 place-items-center">
-                    <Loader className="size-4" aria-label="Sending message" />
-                  </span>
-                ) : sending ? (
-                  <span className="grid size-4 place-items-center">
-                    <ListPlusIcon size="16px" />
-                  </span>
-                ) : (
-                  <span className="grid size-4 place-items-center">
-                    <SendIcon size="16px" />
-                  </span>
-                )}
-              </Button>
-            )}
-            <textarea
-              ref={measureRef}
-              aria-hidden="true"
-              tabIndex={-1}
-              readOnly
-              rows={1}
-              className="invisible pointer-events-none absolute left-0 top-0 h-auto resize-none overflow-hidden"
-            />
-          </div>
-          <div className="mt-1 flex items-center gap-2">
-            {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
-            <ModelSelect />
-          </div>
-        </form>
-      </div>
+      <SessionComposer
+        sessionId={sessionId}
+        port={port}
+        commands={commands}
+        isDesktop={isDesktop}
+        sending={sending}
+        isSubmitting={isSubmitting}
+        sendError={sendError}
+        attachments={attachments}
+        supportsAgentSelection={supportsAgentSelection}
+        submitLockRef={submitLockRef}
+        onSubmit={submitComposerMessage}
+        onAttachFiles={handleAttachFiles}
+        onRemoveAttachment={removeAttachment}
+      />
       )}
       <McpDialog
         isOpen={dialog === "mcps"}

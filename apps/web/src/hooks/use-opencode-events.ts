@@ -1071,7 +1071,7 @@ export function useOpencodeEvents(
     const enqueue = (event: RuntimeEvent) => {
       queueRef.current.push(event);
       if (timerRef.current !== null) return;
-      timerRef.current = window.setTimeout(flush, 16);
+      timerRef.current = window.setTimeout(flush, 80);
     };
 
     const source = new EventSource(`${backendBasePath(provider, port)}/events`);

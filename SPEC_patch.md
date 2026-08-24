@@ -786,3 +786,61 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 
 
 
+## 19. Perf: latência ao digitar no composer (sessões grandes)
+
+### 19.1 Problema
+
+- Em sessões grandes, o texto digitado demora para aparecer no textarea (eco atrasado, pior enquanto o agente responde).
+- Distinto do §6 (que tratou o custo de streaming no *dados*): aqui o vilão é o **re-render disparado pela digitação**.
+
+### 19.2 Causa
+
+1. `input` (`useState`) mora no topo de `SessionPage` ($id.tsx) — cada tecla re-renderiza a página inteira, incluindo todos os `MessageItem`.
+2. `memo(MessageItem)` estava **furado**: prop `onUndo` era arrow inline `(messageID) => void runBuiltinAction("undo", messageID)` — nova referência de função a cada render → comparação rasa falha → todos os itens re-renderizam por tecla.
+3. Cada `MessageItem` re-parseava seu markdown completo com react-markdown (`<Markdown remarkPlugins={[remarkGfm]}>`) — O(conteúdo total da sessão) **por tecla**.
+4. Agravantes: efeito de medição (`measureRef`) rodando por tecla com leitura de `scrollHeight` (reflow síncrono no caminho urgente); handlers `onChange`+`onInput` duplicados (mesmo evento nativo duas vezes); filtro `visibleMessages.filter(hasVisibleContent)` O(n) por render.
+5. Durante streaming (§6), lotes de ~16ms disparam o mesmo re-render total e competem com as teclas na thread principal.
+
+### 19.3 Fix (cirúrgico — mesma meta de uma decomposição em componentes, sem o risco)
+
+1. `handleUndoMessage` com `useCallback([runBuiltinAction])`; JSX usa `onUndo={isChildSession ? undefined : handleUndoMessage}` → identidade estável → `memo` volta a pular todos os itens por tecla.
+2. `MemoizedMarkdown` = `memo` próprio recebendo só `content` (plugins hoisted em `markdownPlugins`) → markdown só é re-parseado quando o texto da própria mensagem muda (streaming re-parseia apenas a mensagem em crescimento).
+3. `displayMessages = useMemo(visibleMessages.filter(hasVisibleContent))`.
+4. Medição do composer usa `useDeferredValue(input)` → reflow sai do caminho urgente entre tecla e eco.
+5. Handler `onInput` duplicado removido (React `onChange` de textarea já é o evento nativo `input`).
+
+### 19.4 Nota de arquitetura
+
+- Dividir `SessionPage` em componentes menores **sem mover o estado** não resolveria (o problema é onde `input` vive + identidade de props). Decomposição completa (composer isolado com estado local) segue como follow-up opcional; o ganho imediato veio das correções acima.
+
+### 19.5 Verificação
+
+- `tsc --noEmit`: apenas os 3 erros pré-existentes (hooks, arquivos não tocados).
+- Build OK; deploy OK; portal na :3000 servindo `index-Ck1Kdu43.js` (bundle novo).
+- Validação de digitação em sessão grande: pendente de teste visual do usuário (mobile 390x844, reload ignoreCache).
+
+### 19.6 Arquivos
+
+- `apps/web/src/routes/_app/session/$id.tsx` — import `useDeferredValue`; `markdownPlugins`/`MemoizedMarkdown`; `handleUndoMessage`; `displayMessages`; efeito de medição com `deferredInput`; `onInput` removido.
+
+### 19.7 Fase 2 — extração do `SessionComposer` (tecla não toca mais a página)
+
+- **Motivo:** no celular a lentidão ainda era perceptível (CPU single-thread ~10x mais lenta que PC amplifica qualquer trabalho por tecla); no PC era imperceptível mesmo na fase 1.
+- **Causa remanescente:** `input` continuava no topo de `SessionPage` → cada tecla re-executava a função inteira da página (2260+ linhas) e fazia diff de toda a árvore (header, lista, dialogs), mesmo com os `MessageItem` pulados pelo memo.
+- **Fix:** componente `SessionComposer = memo(...)` no próprio `$id.tsx`, dono de: `input`, `wrapped`, `fileResults`, `textareaRef`/`measureRef`/`fileInputRef`, `useFileMention`/`useSlashCommand`, efeito de medição (`useDeferredValue`) e todos os handlers do textarea/popovers/botões. Props do pai (todos estáveis): `sessionId`, `port`, `commands`, `isDesktop`, `sending`, `isSubmitting`, `sendError`, `attachments`, `supportsAgentSelection`, `submitLockRef`, `onSubmit`, `onAttachFiles`, `onRemoveAttachment`.
+- **Pai:** `handleSubmit` → `submitComposerMessage(messageText, attachments)` via `useCallback` (recebe texto/anexos como argumentos em vez de ler estado); limpar o input passou pro composer (logo após `onSubmit`); anexos continuam no pai (mudam raramente).
+- **`use-commands.ts`:** merge `[...BUILTIN_COMMANDS, ...(data ?? [])]` agora em `useMemo([data])` — antes devolvia array novo a cada render, o que quebraria o memo do composer.
+- **Resultado esperado:** tecla → re-render só do composer (subtree mínima); `SessionPage` nem executa durante digitação.
+- **Deploy:** bundle `index-DWv7oebx.js` (md5 conferido contra `.output` local) servindo na :3000.
+
+### 19.8 Fase 4 — `content-visibility` nos blocos de mensagem (causa raiz do lag no celular)
+
+- **Evidência (CDP, sessão c/ 246 blocos, CPU throttle 4x ≈ celular):** forced layout após 1 tecla = **90 ms** (idle: 0,7 ms); congelando a altura do footer via inline style, a mesma tecla caía para **0,2 ms** → cada mudança de altura do rodapé (textarea cresce a cada quebra de linha, `field-sizing-content`) re-layoutava a coluna flex inteira, incluindo as centenas de mensagens.
+- **Fix:** `cvSkipLayout = { contentVisibility: "auto", containIntrinsicSize: "auto 150px" }` aplicado aos três blocos do `MessageItem` (texto, tool calls, permissões). Itens fora da tela pulam layout/paint; scroll preservado (altura total 31k px íntegra; browser memoriza tamanho real dos já renderizados).
+- **Resultado (mesmas condições):** forced layout pós-tecla **0 ms**; rajada de 40 teclas com quebras de linha: média **13,9 ms**, máx 23,7 ms, **0 frames > 60 ms** (antes: média 114 ms, máx 251 ms, frames de 113–226 ms).
+- **Risco monitorado:** seleções atravessando itens offscreen podem ter ClientRects vazios — observar o fluxo de cópia do §17.
+
+### 19.9 `scripts/deploy.sh` reescrito
+
+- Antes: matava as instâncias e não subia nada; o hash impresso vinha de um `grep` arbitrário sobre assets velhos (mentia sobre o build servido).
+- Agora: build → cópia → detecta TODAS as sessões tmux (term-cli) que hospedam instância varrendo a árvore de processos do pane → derruba tudo → reergue cada sessão (`C-c` + `bunx openportal`; "portal" tem prioridade e fica na :3000) → espera subir e valida o bundle servido em cada porta contra o build recém-copiado; exit 1 em qualquer divergência.

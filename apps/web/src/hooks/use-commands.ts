@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import useSWR from "swr";
 import { useInstanceStore } from "@/stores/instance-store";
 import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
@@ -45,8 +46,13 @@ export function useCommands(directory?: string) {
     revalidateOnFocus: false,
   });
 
+  const commands = useMemo(
+    () => [...BUILTIN_COMMANDS, ...(data ?? [])],
+    [data],
+  );
+
   return {
-    commands: [...BUILTIN_COMMANDS, ...(data ?? [])],
+    commands,
     error,
     isLoading,
   };
