@@ -209,6 +209,7 @@ export function useSessionMessages(sessionId: string | undefined) {
   } = useSWR<SessionMessage[]>(key, fetcher, {
     keepPreviousData: true,
     revalidateOnFocus: false,
+    dedupingInterval: 0,
   });
 
   const pendingAssistantID = useMemo(() => {

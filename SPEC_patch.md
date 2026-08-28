@@ -844,3 +844,41 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 
 - Antes: matava as instâncias e não subia nada; o hash impresso vinha de um `grep` arbitrário sobre assets velhos (mentia sobre o build servido).
 - Agora: build → cópia → detecta TODAS as sessões tmux (term-cli) que hospedam instância varrendo a árvore de processos do pane → derruba tudo → reergue cada sessão (`C-c` + `bunx openportal`; "portal" tem prioridade e fica na :3000) → espera subir e valida o bundle servido em cada porta contra o build recém-copiado; exit 1 em qualquer divergência.
+
+## 20. Bash amarelo preso durante thinking + permissão não aparecia (sessão TUI vista no portal)
+
+### 20.1 Sintoma (relato do usuário, 2 cenários no TUI)
+
+- Bash executa no TUI e termina → modelo entra em `thinking` (`session.status: busy`) → card do bash no portal fica amarelo (`border-warning/40 bg-warning/10`, `apps/web/src/routes/_app/session/$id.tsx:1059`) como se ainda estivesse `running/pending`, só volta ao cinza (`border-border bg-muted/25`) quando o modelo responde texto.
+- No segundo cenário, nem quando o modelo pede permissão para um novo bash o amarelo sumia e o pedido de permissão não aparecia. Hipótese do usuário: "não está correto o fim de uma Tool".
+
+### 20.2 Causa raiz (dupla)
+
+**A — `message.part.updated` só fazia `revalidate` (fetch) com dedup 2s:**
+
+- Opencode 1.18+ usa o novo protocolo `message.*` (`message.part.updated` com `part: ToolPart {callID, tool:"bash", state:{status:"completed",...}}`) em vez do antigo `session.next.tool.success`. O portal tratava `message.part.updated` apenas com `revalidateMessagesNow()` (`apps/web/src/hooks/use-opencode-events.ts:1257`) + `useSessionMessages` com `dedupingInterval: 2000` (default SWR). 4 eventos em 80ms (pending→running→completed→step-finish) colapsavam num só fetch 2s depois; se o fetch pegava dado stale no servidor, o card ficava amarelo até o `step-finish` do texto seguinte (quando o modelo respondia) — explicando o "só sai quando responde".
+- Analogia: em vez de colar o aviso "bash terminou" direto no quadro, o portal pedia para buscar o quadro inteiro na central, mas o carteiro só vinha a cada 2s e às vezes trazia o quadro antigo.
+
+**B — `session.next.*` usava `activeAssistantIndex` e ignorava `assistantMessageID`:**
+
+- Todos os handlers `session.next.text/reasoning/tool/step.*` (`apps/web/src/hooks/use-opencode-events.ts:869`) chamavam `updateActiveAssistant()` (último assistant sem `time.completed`). Se `tool.success` chegava **depois** que o próximo `reasoning` já tinha criado um novo assistant (`step.started`), o `active` já era o novo e o `updateLatestTool` falhava silencioso — tool ficava `running` para sempre até o próximo fetch.
+- `session.next.step.started` usava `id: event.id` (id do evento) em vez de `assistantMessageID` para criar a nova mensagem assistant, e `step.ended/failed` usavam `completeActiveAssistant` sem endereçar o `assistantMessageID` correto.
+
+### 20.3 Fix
+
+1. **`apps/web/src/hooks/use-opencode-events.ts:1` — imports `Message/Part/ToolPart/TextPart/ReasoningPart`.**
+2. **`apps/web/src/hooks/use-opencode-events.ts:233` — novos helpers:**
+   - `toolStateToSessionState()` / `toolPartToSessionTool()` — convertem `ToolPart.state` (ToolState) para `SessionMessageAssistantTool.state` (pending `raw`, running/completed/error com `structured`/`content`/`error`, `time` derivado de `state.time`).
+   - `applyMessagePartUpdated()` — dado `message.part.updated` com `part`, encontra `SessionMessage` por `part.messageID` e, para `tool`/`text`/`reasoning`, substitui ou acrescenta o item no `content` do assistant correto (match por `callID` para tool, `id` para text/reasoning). Retorna novo array só se algo mudou — sem fetch.
+   - `applyMessageUpdated()` — atualiza `time/cost/tokens/finish/error` do assistant a partir de `info: Message` (AssistantMessage).
+3. **`apps/web/src/hooks/use-opencode-events.ts:540` — `updateAssistantById()` + `appendAssistantContentById()` + `completeAssistantById()` — variantes que endereçam `assistantMessageID` quando presente, com fallback para o comportamento antigo (`activeAssistant`) se ausente.**
+4. **Todos os `session.next.*` (`apps/web/src/hooks/use-opencode-events.ts:898`) migrados para `updateAssistantById` / `appendAssistantContentById` / `completeAssistantById` com `event.properties.assistantMessageID`. `text.started` cria o `Text` com `id` via `as any` (SDK 1.14.41 não tipa `id` em `SessionMessageAssistantText`, mas o runtime guarda — mesmos 3 erros pré-existentes). `step.started` passa a usar `assistantMessageID ?? event.id` como `id` da nova mensagem; `step.ended/failed` usam `completeAssistantById`.**
+5. **`apps/web/src/hooks/use-opencode-events.ts:1257` — `message.updated` e `message.part.updated` tentam mutação direta primeiro (`applyMessageUpdated` / `applyMessagePartUpdated` com `revalidate:false`); só em `handled===false` fazem `revalidateMessagesNow()`. Assim o amarelo (`pending/running → completed`) cai no mesmo flush SSE (80ms) que o evento, mesmo com `Thinking...` (`sending` ainda `busy`) e a permissão (`permission.asked` → `mutatePermissions` direto) aparece instantaneamente, independentemente do fetch.**
+6. **`apps/web/src/hooks/use-session-messages.ts:209` — `dedupingInterval: 0` no `useSWR` das mensagens: o fallback de fetch, quando necessário, não fica preso 2s.**
+
+### 20.4 Verificação
+
+- `npx tsc --noEmit` em `apps/web` → 3 erros pré-existentes (`use-opencode-events.ts:223`, `use-session-messages.ts:510/883` — `id` em `SessionMessageAssistantText`).
+- `bun run build` em `apps/web` → ok; `cp` para `~/.bun/install/global/node_modules/openportal/web` + restart via `term-cli` (portal em `:3000`/backend `:4000`).
+- Teste E2E (CDP, portal em `http://localhost:3000`, sessão nova `ses_fb7cd3a52ffeIIdB4rq52NKeuu`, prompt "two bash echo hello1/hello2"): antes do fix, com `dedupingInterval:2000`, o 1º bash ficaria amarelo durante o `reasoning` do 2º; após o fix, `chrome-devtools_evaluate_script` `document.querySelectorAll("[data-tool-card]")` mostra `pending:false` (cinza) imediatamente após cada `completed`, com `Thinking...` ainda visível entre os steps — amarelo e thinking desacoplados, como no TUI.
+- Permissão: `permission.asked` continua via `mutatePermissions` direto; com a tool atualizada direto, o `tool.messageID` já existe no cache e a permissão cai em `messagePermissions` em vez de depender do fetch para virar `unlinked`.

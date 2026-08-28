@@ -11,6 +11,11 @@ import type {
   SessionMessageAssistantReasoning,
   SessionMessageAssistantText,
   SessionMessageAssistantTool,
+  Message,
+  Part,
+  ToolPart,
+  TextPart,
+  ReasoningPart,
 } from "@opencode-ai/sdk/v2";
 import {
   clearMessageQueued,
@@ -227,6 +232,204 @@ function applyPartDelta(
   return updated;
 }
 
+function toolStateToSessionState(
+  state: ToolPart["state"],
+): SessionMessageAssistantTool["state"] {
+  switch (state.status) {
+    case "pending":
+      return { status: "pending", input: (state as { raw: string }).raw ?? "" };
+    case "running":
+      return {
+        status: "running",
+        input: (state.input ?? {}) as Record<string, unknown>,
+        structured: (state.metadata ?? {}) as Record<string, unknown>,
+        content: [],
+      };
+    case "completed": {
+      const output =
+        typeof state.output === "string" ? state.output : "";
+      const attachments = (state as { attachments?: unknown }).attachments as
+        | Array<{ url: string; mime: string; filename?: string }>
+        | undefined;
+      return {
+        status: "completed",
+        input: (state.input ?? {}) as Record<string, unknown>,
+        structured: (state.metadata ?? {}) as Record<string, unknown>,
+        content: output ? [{ type: "text", text: output }] : [],
+        ...(attachments
+          ? {
+              attachments: attachments.map((a) => ({
+                uri: a.url,
+                mime: a.mime,
+                ...(a.filename ? { name: a.filename } : {}),
+              })),
+            }
+          : {}),
+      };
+    }
+    case "error":
+      return {
+        status: "error",
+        input: (state.input ?? {}) as Record<string, unknown>,
+        structured: (state.metadata ?? {}) as Record<string, unknown>,
+        content: [],
+        error: { type: "unknown", message: (state as { error: string }).error ?? "" },
+      };
+    default:
+      return { status: "pending", input: "" };
+  }
+}
+
+function toolPartToSessionTool(
+  part: ToolPart,
+  fallbackCreated: number,
+): SessionMessageAssistantTool {
+  const time: SessionMessageAssistantTool["time"] = (() => {
+    const s = part.state;
+    if (s.status === "pending") return { created: fallbackCreated };
+    if (s.status === "running") return { created: s.time.start, ran: s.time.start };
+    if (s.status === "completed" || s.status === "error")
+      return { created: s.time.start, ran: s.time.start, completed: s.time.end };
+    return { created: fallbackCreated };
+  })();
+
+  return {
+    type: "tool",
+    id: part.callID,
+    name: part.tool,
+    time,
+    state: toolStateToSessionState(part.state),
+    ...(part.metadata ? { provider: { executed: true, metadata: part.metadata } } : {}),
+  };
+}
+
+function applyMessagePartUpdated(
+  messages: SessionMessage[],
+  event: Extract<RuntimeEvent, { type: "message.part.updated" }>,
+): SessionMessage[] {
+  const part = (event.properties as { part: Part }).part;
+  if (!part || typeof part !== "object") return messages;
+  const messageID = (part as { messageID?: string }).messageID;
+  if (!messageID || typeof messageID !== "string") return messages;
+  const idx = messages.findIndex((m) => m.id === messageID);
+  if (idx < 0) return messages;
+  const msg = messages[idx];
+  if (msg.type !== "assistant") return messages;
+  const assistant = msg as SessionMessageAssistant;
+
+  if (part.type === "tool") {
+    const toolPart = part as ToolPart;
+    const sessionTool = toolPartToSessionTool(toolPart, assistant.time.created);
+    const existingIdx = assistant.content.findIndex(
+      (c) => c.type === "tool" && (c as SessionMessageAssistantTool).id === toolPart.callID,
+    );
+    let newContent: SessionMessageAssistant["content"];
+    if (existingIdx >= 0) {
+      newContent = [...assistant.content];
+      newContent[existingIdx] = sessionTool;
+    } else {
+      newContent = [...assistant.content, sessionTool];
+    }
+    const next: SessionMessageAssistant = { ...assistant, content: newContent };
+    const out = [...messages];
+    out[idx] = next;
+    return out;
+  }
+
+  if (part.type === "text") {
+    const textPart = part as TextPart;
+    const existingIdx = assistant.content.findIndex(
+      (c) => c.type === "text" && (c as unknown as { id?: string }).id === textPart.id,
+    );
+    const sessionText: SessionMessageAssistantText = {
+      type: "text",
+      text: textPart.text,
+    } as SessionMessageAssistantText;
+    (sessionText as unknown as { id: string }).id = textPart.id;
+    let newContent: SessionMessageAssistant["content"];
+    if (existingIdx >= 0) {
+      newContent = [...assistant.content];
+      newContent[existingIdx] = sessionText;
+    } else {
+      newContent = [...assistant.content, sessionText];
+    }
+    const next: SessionMessageAssistant = { ...assistant, content: newContent };
+    const out = [...messages];
+    out[idx] = next;
+    return out;
+  }
+
+  if (part.type === "reasoning") {
+    const reasoningPart = part as ReasoningPart;
+    const existingIdx = assistant.content.findIndex(
+      (c) => c.type === "reasoning" && (c as SessionMessageAssistantReasoning).id === reasoningPart.id,
+    );
+    const sessionReasoning: SessionMessageAssistantReasoning = {
+      type: "reasoning",
+      id: reasoningPart.id,
+      text: reasoningPart.text,
+    };
+    let newContent: SessionMessageAssistant["content"];
+    if (existingIdx >= 0) {
+      newContent = [...assistant.content];
+      newContent[existingIdx] = sessionReasoning;
+    } else {
+      newContent = [...assistant.content, sessionReasoning];
+    }
+    const next: SessionMessageAssistant = { ...assistant, content: newContent };
+    const out = [...messages];
+    out[idx] = next;
+    return out;
+  }
+
+  return messages;
+}
+
+function applyMessageUpdated(
+  messages: SessionMessage[],
+  event: Extract<RuntimeEvent, { type: "message.updated" }>,
+): SessionMessage[] {
+  const info = (event.properties as { info: Message }).info as Message & {
+    cost?: number;
+    tokens?: SessionMessageAssistant["tokens"];
+    time?: { created: number; completed?: number };
+    finish?: string;
+    error?: unknown;
+  };
+  if (!info || typeof info !== "object" || !("id" in info)) return messages;
+  const idx = messages.findIndex((m) => m.id === (info as { id: string }).id);
+  if (idx < 0) return messages;
+  const msg = messages[idx];
+  if (msg.type !== "assistant") return messages;
+  const assistant = msg as SessionMessageAssistant;
+  const next: SessionMessageAssistant = { ...assistant };
+  const time = (info as { time?: { created?: number; completed?: number } }).time;
+  if (time) {
+    next.time = {
+      created: time.created ?? next.time.created,
+      ...(time.completed !== undefined ? { completed: time.completed } : next.time.completed !== undefined ? { completed: next.time.completed } : {}),
+    };
+  }
+  if ("cost" in info && typeof info.cost === "number") next.cost = info.cost;
+  if ("tokens" in info && info.tokens) next.tokens = info.tokens as SessionMessageAssistant["tokens"];
+  if ("finish" in info && typeof (info as { finish?: string }).finish === "string")
+    next.finish = (info as { finish: string }).finish;
+  if ("error" in info && (info as { error?: unknown }).error)
+    next.error = { type: "unknown", message: String((info as { error: { message?: string } }).error?.message ?? (info as { error: unknown }).error) };
+  const out = [...messages];
+  out[idx] = next;
+  // Only consider updated if something changed
+  if (
+    next.time === assistant.time &&
+    next.cost === assistant.cost &&
+    next.tokens === assistant.tokens &&
+    next.finish === assistant.finish &&
+    next.error === assistant.error
+  )
+    return messages;
+  return out;
+}
+
 const partDeltaFallbackTimers = new Map<
   string,
   ReturnType<typeof setTimeout>
@@ -337,6 +540,19 @@ function updateActiveAssistant(
   return replaceMessageAt(messages, index, updater(assistant));
 }
 
+function updateAssistantById(
+  messages: SessionMessage[],
+  assistantMessageID: string | undefined,
+  updater: (assistant: SessionMessageAssistant) => SessionMessageAssistant,
+) {
+  if (!assistantMessageID) return updateActiveAssistant(messages, updater);
+  const idx = messages.findIndex((m) => m.id === assistantMessageID);
+  if (idx < 0) return updateActiveAssistant(messages, updater);
+  const msg = messages[idx];
+  if (msg.type !== "assistant") return messages;
+  return replaceMessageAt(messages, idx, updater(msg as SessionMessageAssistant));
+}
+
 function updateLatestTool(
   assistant: SessionMessageAssistant,
   callID: string,
@@ -408,6 +624,33 @@ function appendAssistantContent(
     ...assistant,
     content: [...assistant.content, item],
   }));
+}
+
+function appendAssistantContentById(
+  messages: SessionMessage[],
+  assistantMessageID: string | undefined,
+  item: SessionMessageAssistant["content"][number],
+) {
+  return updateAssistantById(messages, assistantMessageID, (assistant) => ({
+    ...assistant,
+    content: [...assistant.content, item],
+  }));
+}
+
+function completeAssistantById(
+  messages: SessionMessage[],
+  key: string,
+  assistantMessageID: string | undefined,
+  timestamp: number,
+  updater: (assistant: SessionMessageAssistant) => SessionMessageAssistant,
+) {
+  if (!assistantMessageID) return completeActiveAssistant(messages, key, timestamp, updater);
+  const idx = messages.findIndex((m) => m.id === assistantMessageID);
+  if (idx < 0) return completeActiveAssistant(messages, key, timestamp, updater);
+  const assistant = messages[idx];
+  if (assistant.type !== "assistant") return messages;
+  recordCompletedMessage(key, assistant.id, timestamp, assistant.finish);
+  return replaceMessageAt(messages, idx, updater(assistant as SessionMessageAssistant));
 }
 
 function removeMatchingOptimisticUser(
@@ -586,7 +829,7 @@ function applyEvent(
             event.properties.timestamp,
           ),
           {
-            id: event.id,
+            id: (event.properties as { assistantMessageID?: string }).assistantMessageID ?? event.id,
             type: "assistant",
             agent: event.properties.agent,
             model: event.properties.model,
@@ -605,9 +848,10 @@ function applyEvent(
 
     case "session.next.step.ended":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        completeActiveAssistant(
+        completeAssistantById(
           items,
           getMessagesKey(port, event.properties.sessionID, provider),
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
           event.properties.timestamp,
           (assistant) => ({
             ...assistant,
@@ -633,9 +877,10 @@ function applyEvent(
 
     case "session.next.step.failed":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        completeActiveAssistant(
+        completeAssistantById(
           items,
           getMessagesKey(port, event.properties.sessionID, provider),
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
           event.properties.timestamp,
           (assistant) => ({
             ...assistant,
@@ -651,262 +896,311 @@ function applyEvent(
       break;
 
     case "session.next.text.started":
-      mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        appendAssistantContent(items, {
+      mutateMessages(port, provider, event.properties.sessionID, (items) => {
+        const item = {
           type: "text",
           text: "",
-        }),
-      );
+        } as unknown as SessionMessageAssistantText;
+        (item as unknown as { id: string }).id =
+          (event.properties as { textID?: string }).textID ?? `text-${event.id}`;
+        return appendAssistantContentById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          item,
+        );
+      });
       break;
 
     case "session.next.text.delta":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => {
-          const textIndex = latestTextIndex(assistant);
-          if (textIndex < 0) return assistant;
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) => {
+            const textIndex = latestTextIndex(assistant);
+            if (textIndex < 0) return assistant;
 
-          const text = assistant.content[textIndex];
-          if (text.type !== "text") return assistant;
+            const text = assistant.content[textIndex];
+            if (text.type !== "text") return assistant;
 
-          const content = [...assistant.content];
-          content[textIndex] = {
-            ...text,
-            text: `${text.text}${event.properties.delta}`,
-          } satisfies SessionMessageAssistantText;
-          return { ...assistant, content };
-        }),
+            const content = [...assistant.content];
+            content[textIndex] = {
+              ...text,
+              text: `${text.text}${event.properties.delta}`,
+            } satisfies SessionMessageAssistantText;
+            return { ...assistant, content };
+          },
+        ),
       );
       break;
 
     case "session.next.text.ended":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => {
-          const textIndex = latestTextIndex(assistant);
-          if (textIndex < 0) return assistant;
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) => {
+            const textIndex = latestTextIndex(assistant);
+            if (textIndex < 0) return assistant;
 
-          const text = assistant.content[textIndex];
-          if (text.type !== "text") return assistant;
+            const text = assistant.content[textIndex];
+            if (text.type !== "text") return assistant;
 
-          const content = [...assistant.content];
-          content[textIndex] = {
-            ...text,
-            text: event.properties.text,
-          } satisfies SessionMessageAssistantText;
-          return { ...assistant, content };
-        }),
+            const content = [...assistant.content];
+            content[textIndex] = {
+              ...text,
+              text: event.properties.text,
+            } satisfies SessionMessageAssistantText;
+            return { ...assistant, content };
+          },
+        ),
       );
       break;
 
     case "session.next.reasoning.started":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        appendAssistantContent(items, {
-          type: "reasoning",
-          id: event.properties.reasoningID,
-          text: "",
-        }),
+        appendAssistantContentById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          {
+            type: "reasoning",
+            id: event.properties.reasoningID,
+            text: "",
+          },
+        ),
       );
       break;
 
     case "session.next.reasoning.delta":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => {
-          const reasoningIndex = latestReasoningIndex(
-            assistant,
-            event.properties.reasoningID,
-          );
-          if (reasoningIndex < 0) return assistant;
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) => {
+            const reasoningIndex = latestReasoningIndex(
+              assistant,
+              event.properties.reasoningID,
+            );
+            if (reasoningIndex < 0) return assistant;
 
-          const reasoning = assistant.content[reasoningIndex];
-          if (reasoning.type !== "reasoning") return assistant;
+            const reasoning = assistant.content[reasoningIndex];
+            if (reasoning.type !== "reasoning") return assistant;
 
-          const content = [...assistant.content];
-          content[reasoningIndex] = {
-            ...reasoning,
-            text: `${reasoning.text}${event.properties.delta}`,
-          } satisfies SessionMessageAssistantReasoning;
-          return { ...assistant, content };
-        }),
+            const content = [...assistant.content];
+            content[reasoningIndex] = {
+              ...reasoning,
+              text: `${reasoning.text}${event.properties.delta}`,
+            } satisfies SessionMessageAssistantReasoning;
+            return { ...assistant, content };
+          },
+        ),
       );
       break;
 
     case "session.next.reasoning.ended":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) => {
-          const reasoningIndex = latestReasoningIndex(
-            assistant,
-            event.properties.reasoningID,
-          );
-          if (reasoningIndex < 0) return assistant;
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) => {
+            const reasoningIndex = latestReasoningIndex(
+              assistant,
+              event.properties.reasoningID,
+            );
+            if (reasoningIndex < 0) return assistant;
 
-          const reasoning = assistant.content[reasoningIndex];
-          if (reasoning.type !== "reasoning") return assistant;
+            const reasoning = assistant.content[reasoningIndex];
+            if (reasoning.type !== "reasoning") return assistant;
 
-          const content = [...assistant.content];
-          content[reasoningIndex] = {
-            ...reasoning,
-            text: event.properties.text,
-          } satisfies SessionMessageAssistantReasoning;
-          return { ...assistant, content };
-        }),
+            const content = [...assistant.content];
+            content[reasoningIndex] = {
+              ...reasoning,
+              text: event.properties.text,
+            } satisfies SessionMessageAssistantReasoning;
+            return { ...assistant, content };
+          },
+        ),
       );
       break;
 
     case "session.next.tool.input.started":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        appendAssistantContent(items, {
-          type: "tool",
-          id: event.properties.callID,
-          name: event.properties.name,
-          time: {
-            created: event.properties.timestamp,
+        appendAssistantContentById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          {
+            type: "tool",
+            id: event.properties.callID,
+            name: event.properties.name,
+            time: {
+              created: event.properties.timestamp,
+            },
+            state: {
+              status: "pending",
+              input: "",
+            },
           },
-          state: {
-            status: "pending",
-            input: "",
-          },
-        }),
+        ),
       );
       break;
 
     case "session.next.tool.input.delta":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => {
-            if (tool.state.status !== "pending") return tool;
-            return {
-              ...tool,
-              state: {
-                ...tool.state,
-                input: `${tool.state.input}${event.properties.delta}`,
-              },
-            };
-          }),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => {
+              if (tool.state.status !== "pending") return tool;
+              return {
+                ...tool,
+                state: {
+                  ...tool.state,
+                  input: `${tool.state.input}${event.properties.delta}`,
+                },
+              };
+            }),
         ),
       );
       break;
 
     case "session.next.tool.input.ended":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => {
-            if (tool.state.status !== "pending") return tool;
-            return {
-              ...tool,
-              state: {
-                ...tool.state,
-                input: event.properties.text,
-              },
-            };
-          }),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => {
+              if (tool.state.status !== "pending") return tool;
+              return {
+                ...tool,
+                state: {
+                  ...tool.state,
+                  input: event.properties.text,
+                },
+              };
+            }),
         ),
       );
       break;
 
     case "session.next.tool.called":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => ({
-            ...tool,
-            name: event.properties.tool,
-            provider: event.properties.provider,
-            time: {
-              ...tool.time,
-              ran: event.properties.timestamp,
-            },
-            state: {
-              status: "running",
-              input: event.properties.input,
-              structured: {},
-              content: [],
-            },
-          })),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => ({
+              ...tool,
+              name: event.properties.tool,
+              provider: event.properties.provider,
+              time: {
+                ...tool.time,
+                ran: event.properties.timestamp,
+              },
+              state: {
+                status: "running",
+                input: event.properties.input,
+                structured: {},
+                content: [],
+              },
+            })),
         ),
       );
       break;
 
     case "session.next.tool.progress":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => {
-            if (tool.state.status !== "running") return tool;
-            return {
-              ...tool,
-              state: {
-                ...tool.state,
-                structured: event.properties.structured,
-                content: [...event.properties.content],
-              },
-            };
-          }),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => {
+              if (tool.state.status !== "running") return tool;
+              return {
+                ...tool,
+                state: {
+                  ...tool.state,
+                  structured: event.properties.structured,
+                  content: [...event.properties.content],
+                },
+              };
+            }),
         ),
       );
       break;
 
     case "session.next.tool.success":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => {
-            const input =
-              tool.state.status === "running" ||
-              tool.state.status === "completed"
-                ? tool.state.input
-                : {};
-            return {
-              ...tool,
-              provider: event.properties.provider,
-              time: {
-                ...tool.time,
-                completed: event.properties.timestamp,
-              },
-              state: {
-                status: "completed",
-                input,
-                structured: event.properties.structured,
-                content: [...event.properties.content],
-              },
-            };
-          }),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => {
+              const input =
+                tool.state.status === "running" ||
+                tool.state.status === "completed"
+                  ? tool.state.input
+                  : {};
+              return {
+                ...tool,
+                provider: event.properties.provider,
+                time: {
+                  ...tool.time,
+                  completed: event.properties.timestamp,
+                },
+                state: {
+                  status: "completed",
+                  input,
+                  structured: event.properties.structured,
+                  content: [...event.properties.content],
+                },
+              };
+            }),
         ),
       );
       break;
 
     case "session.next.tool.failed":
       mutateMessages(port, provider, event.properties.sessionID, (items) =>
-        updateActiveAssistant(items, (assistant) =>
-          updateLatestTool(assistant, event.properties.callID, (tool) => {
-            const input =
-              tool.state.status === "running" ||
-              tool.state.status === "completed"
-                ? tool.state.input
-                : {};
-            const structured =
-              tool.state.status === "running" ||
-              tool.state.status === "completed" ||
-              tool.state.status === "error"
-                ? tool.state.structured
-                : {};
-            const content =
-              tool.state.status === "running" ||
-              tool.state.status === "completed" ||
-              tool.state.status === "error"
-                ? tool.state.content
-                : [];
-            return {
-              ...tool,
-              provider: event.properties.provider,
-              time: {
-                ...tool.time,
-                completed: event.properties.timestamp,
-              },
-              state: {
-                status: "error",
-                input,
-                structured,
-                content,
-                error: event.properties.error,
-              },
-            };
-          }),
+        updateAssistantById(
+          items,
+          (event.properties as { assistantMessageID?: string }).assistantMessageID,
+          (assistant) =>
+            updateLatestTool(assistant, event.properties.callID, (tool) => {
+              const input =
+                tool.state.status === "running" ||
+                tool.state.status === "completed"
+                  ? tool.state.input
+                  : {};
+              const structured =
+                tool.state.status === "running" ||
+                tool.state.status === "completed" ||
+                tool.state.status === "error"
+                  ? tool.state.structured
+                  : {};
+              const content =
+                tool.state.status === "running" ||
+                tool.state.status === "completed" ||
+                tool.state.status === "error"
+                  ? tool.state.content
+                  : [];
+              return {
+                ...tool,
+                provider: event.properties.provider,
+                time: {
+                  ...tool.time,
+                  completed: event.properties.timestamp,
+                },
+                state: {
+                  status: "error",
+                  input,
+                  structured,
+                  content,
+                  error: event.properties.error,
+                },
+              };
+            }),
         ),
       );
       break;
@@ -966,10 +1260,26 @@ function applyEvent(
       });
       break;
 
-    case "message.updated":
-    case "message.part.updated":
-      revalidateMessagesNow(port, provider, event.properties.sessionID);
+    case "message.updated": {
+      let handled = false;
+      mutateMessages(port, provider, event.properties.sessionID, (items) => {
+        const next = applyMessageUpdated(items, event as Extract<RuntimeEvent, { type: "message.updated" }>);
+        if (next !== items) handled = true;
+        return next;
+      });
+      if (!handled) revalidateMessagesNow(port, provider, event.properties.sessionID);
       break;
+    }
+    case "message.part.updated": {
+      let handled = false;
+      mutateMessages(port, provider, event.properties.sessionID, (items) => {
+        const next = applyMessagePartUpdated(items, event as Extract<RuntimeEvent, { type: "message.part.updated" }>);
+        if (next !== items) handled = true;
+        return next;
+      });
+      if (!handled) revalidateMessagesNow(port, provider, event.properties.sessionID);
+      break;
+    }
 
     case "message.part.delta": {
       let applied = false;
