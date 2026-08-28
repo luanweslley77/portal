@@ -1,10 +1,19 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useCallback, useMemo, memo } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Ripples } from "ldrs/react";
 import "ldrs/react/Ripples.css";
 import { Button } from "@/components/ui/button";
+import { toast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader } from "@/components/ui/loader";
@@ -14,7 +23,14 @@ import {
   FileMentionPopover,
   useFileMention,
 } from "@/components/file-mention-popover";
+import { CommandPopover } from "@/components/command-popover";
+import { McpDialog } from "@/components/mcp-dialog";
+import { StatusDialog } from "@/components/status-dialog";
+import { useSlashCommand } from "@/hooks/use-slash-command";
+import { useCommands, type SlashCommand } from "@/hooks/use-commands";
+import useMediaQuery from "@/hooks/use-media-query";
 import {
+  ChevronDownIcon,
   IconBadgeSparkle,
   IconEye,
   IconMagnifier,
@@ -22,7 +38,11 @@ import {
   IconSquareFeather,
   IconUser,
   InformationCircleIcon,
+  ListPlusIcon,
+  PaperclipIcon,
   SendIcon,
+  Undo2Icon,
+  XMarkIcon,
 } from "@/components/icons/lucide";
 import { useAgentStore } from "@/stores/agent-store";
 import { useInstanceStore } from "@/stores/instance-store";
@@ -70,6 +90,44 @@ interface PromptSendResponse {
   mode?: "v2" | "legacy";
   message?: SessionMessage;
   messageID?: string;
+}
+
+interface Attachment {
+  id: string;
+  name: string;
+  mime: string;
+  url: string;
+  size: number;
+}
+
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_ATTACHMENT_MIMES =
+  "image/*,application/pdf,text/plain,text/markdown,text/csv,application/json";
+
+function isAcceptedAttachmentMime(mime: string) {
+  if (mime.startsWith("image/")) return true;
+  return [
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+  ].includes(mime);
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsDataURL(file);
+  });
 }
 
 function isValidSessionAgent(agents: Agent[], name?: string) {
@@ -252,6 +310,230 @@ function formatToolCall(part: ToolPart): {
       };
     }
   }
+}
+
+function formatToolArgs(
+  input: Record<string, unknown>,
+  omit: string[] = [],
+): string {
+  const primitives = Object.entries(input).filter(([key, value]) => {
+    if (omit.includes(key)) return false;
+    return (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "boolean"
+    );
+  });
+  if (primitives.length === 0) return "";
+  return `[${primitives
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(", ")}]`;
+}
+
+function formatToolInvocation(part: ToolPart): string {
+  const toolName = part.tool?.toLowerCase() || "";
+  const input = (part.state.input || {}) as Record<string, unknown>;
+
+  switch (toolName) {
+    case "bash":
+    case "shell":
+      return `$ ${String(input.command ?? "")}`.trim();
+    case "read": {
+      const filePath = input.filePath || input.file || "";
+      const args = formatToolArgs(input, ["filePath", "file"]);
+      return `Read ${filePath}${args ? ` ${args}` : ""}`.trim();
+    }
+    case "write":
+      return `Write ${String(input.filePath || input.file || "")}`.trim();
+    case "edit": {
+      const filePath = input.filePath || input.file || "";
+      const replaceAll =
+        input.replaceAll !== undefined
+          ? ` [replaceAll=${String(input.replaceAll)}]`
+          : "";
+      return `Edit ${filePath}${replaceAll}`.trim();
+    }
+    case "glob": {
+      const pattern = input.pattern || "";
+      const path = input.path;
+      return `Glob "${pattern}"${path ? ` in ${String(path)}` : ""}`.trim();
+    }
+    case "grep": {
+      const pattern = input.pattern || "";
+      const path = input.path;
+      return `Grep "${pattern}"${path ? ` in ${String(path)}` : ""}`.trim();
+    }
+    case "webfetch":
+      return `WebFetch ${String(input.url || "")}`.trim();
+    case "websearch":
+      return `WebSearch "${String(input.query || "")}"`.trim();
+    default: {
+      const args = formatToolArgs(input);
+      return `${part.tool || "tool"}${args ? ` ${args}` : ""}`.trim();
+    }
+  }
+}
+
+function toolMetadata(part: ToolPart): Record<string, unknown> {
+  return "metadata" in part.state && part.state.metadata
+    ? part.state.metadata
+    : {};
+}
+
+function parseTodoItems(input: Record<string, unknown>) {
+  const raw = input.todos;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const record = item as Record<string, unknown>;
+    const status = typeof record.status === "string" ? record.status : undefined;
+    const content =
+      typeof record.content === "string" ? record.content : undefined;
+    return status && content ? [{ status, content }] : [];
+  });
+}
+
+function parseApplyPatchFiles(part: ToolPart) {
+  const files = toolMetadata(part).files;
+  if (!Array.isArray(files)) return [];
+  return files.flatMap((item) => {
+    if (typeof item !== "object" || item === null) return [];
+    const record = item as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type : undefined;
+    const relativePath =
+      typeof record.relativePath === "string"
+        ? record.relativePath
+        : undefined;
+    const patch = typeof record.patch === "string" ? record.patch : undefined;
+    const movePath =
+      typeof record.movePath === "string" ? record.movePath : undefined;
+    return type && relativePath && patch !== undefined
+      ? [{ type, relativePath, patch, movePath }]
+      : [];
+  });
+}
+
+function toolExpandedLines(part: ToolPart): string[] {
+  const toolName = part.tool?.toLowerCase() || "";
+  const input = (part.state.input || {}) as Record<string, unknown>;
+  const metadata = toolMetadata(part);
+  const output =
+    part.state.status === "completed" ? part.state.output : undefined;
+  const error = part.state.status === "error" ? part.state.error : undefined;
+  const lines: string[] = [];
+  let skipOutput = false;
+
+  switch (toolName) {
+    case "todowrite": {
+      const todos = parseTodoItems(input);
+      if (todos.length > 0) {
+        lines.push(
+          "Todos",
+          ...todos.map((todo) => {
+            const mark =
+              todo.status === "completed"
+                ? "✓"
+                : todo.status === "in_progress"
+                  ? "•"
+                  : " ";
+            return `[${mark}] ${todo.content}`;
+          }),
+        );
+        skipOutput = true;
+        break;
+      }
+      lines.push(formatToolInvocation(part));
+      break;
+    }
+    case "apply_patch": {
+      const files = parseApplyPatchFiles(part);
+      if (files.length > 0) {
+        lines.push(
+          "Patch",
+          ...files.flatMap((file) => {
+            const title =
+              file.type === "delete"
+                ? `Deleted ${file.relativePath}`
+                : file.type === "add"
+                  ? `Created ${file.relativePath}`
+                  : file.type === "move"
+                    ? `Moved ${file.movePath ?? file.relativePath} → ${file.relativePath}`
+                    : `Patched ${file.relativePath}`;
+            return [title, file.patch];
+          }),
+        );
+        skipOutput = true;
+        break;
+      }
+      lines.push("Patch");
+      break;
+    }
+    case "write": {
+      lines.push(formatToolInvocation(part));
+      const content = input.content;
+      if (typeof content === "string" && content.trim()) {
+        lines.push(content);
+      }
+      break;
+    }
+    case "edit": {
+      lines.push(formatToolInvocation(part));
+      const diff = metadata.diff;
+      if (typeof diff === "string" && diff.trim()) {
+        lines.push(diff);
+      }
+      break;
+    }
+    case "task": {
+      const description = input.description;
+      lines.push(
+        typeof description === "string" && description.trim()
+          ? `Task ${description}`
+          : formatToolInvocation(part),
+      );
+      break;
+    }
+    case "execute": {
+      lines.push("execute");
+      const calls = Array.isArray(metadata.toolCalls)
+        ? metadata.toolCalls
+        : [];
+      for (const call of calls) {
+        if (typeof call !== "object" || call === null) continue;
+        const record = call as Record<string, unknown>;
+        const tool = typeof record.tool === "string" ? record.tool : undefined;
+        if (!tool) continue;
+        const args = formatToolArgs(
+          (record.input ?? {}) as Record<string, unknown>,
+        );
+        lines.push(
+          `↳ ${tool}${args ? ` ${args}` : ""}${
+            record.status === "error" ? " (failed)" : ""
+          }`,
+        );
+      }
+      break;
+    }
+    case "skill": {
+      const name = input.name;
+      lines.push(
+        typeof name === "string" && name.trim()
+          ? `Skill "${name}"`
+          : formatToolInvocation(part),
+      );
+      break;
+    }
+    default:
+      lines.push(formatToolInvocation(part));
+  }
+
+  if (!skipOutput && output && output.trim()) {
+    lines.push(output);
+  }
+  if (error && error.trim()) {
+    lines.push(error);
+  }
+  return lines;
 }
 
 function QuestionDisplay({
@@ -620,6 +902,8 @@ function PermissionRequestForm({
   );
 }
 
+const toolCardLines = new WeakMap<HTMLElement, () => string>();
+
 const ToolCallItem = memo(function ToolCallItem({
   part,
   port,
@@ -635,6 +919,14 @@ const ToolCallItem = memo(function ToolCallItem({
   pendingQuestions: QuestionRequest[];
   onQuestionResolved: (requestId: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const pointerDownRef = useRef<{
+    x: number;
+    y: number;
+    hadSelection: boolean;
+  } | null>(null);
+  const clickTimerRef = useRef<number | null>(null);
   const { icon, label, details } = formatToolCall(part);
   const isQuestionTool = (part.tool || "").toLowerCase() === "question";
   const questions = isQuestionTool ? parseToolQuestions(part) : [];
@@ -643,6 +935,60 @@ const ToolCallItem = memo(function ToolCallItem({
   const isError = part.state.status === "error";
   const isPending =
     part.state.status === "pending" || part.state.status === "running";
+  const input = part.state.input as Record<string, unknown> | undefined;
+  const hasInput = !!input && Object.keys(input).length > 0;
+  const output =
+    part.state.status === "completed" ? part.state.output : undefined;
+  const error = part.state.status === "error" ? part.state.error : undefined;
+  const canExpand = hasInput || !!output || !!error;
+
+  const toggleImmediately = () => {
+    setExpanded((value) => !value);
+  };
+
+  const toggleExpanded = (
+    event?: React.MouseEvent | React.KeyboardEvent,
+  ) => {
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      return;
+    }
+    if (window.getSelection()?.toString()) return;
+    if (event && "detail" in event && event.detail > 1) return;
+    if (
+      pointerDownRef.current &&
+      event &&
+      "clientX" in event &&
+      "clientY" in event
+    ) {
+      if (pointerDownRef.current.hadSelection) return;
+      const dx = event.clientX - pointerDownRef.current.x;
+      const dy = event.clientY - pointerDownRef.current.y;
+      if (Math.hypot(dx, dy) > 4) return;
+    }
+    pointerDownRef.current = null;
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      setExpanded((value) => !value);
+    }, 250);
+  };
+
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current !== null) {
+        window.clearTimeout(clickTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const el = cardRef.current;
+    if (el) {
+      toolCardLines.set(el, () => toolExpandedLines(part).join("\n"));
+    }
+  }, [part]);
 
   if (hasQuestions) {
     return (
@@ -687,22 +1033,92 @@ const ToolCallItem = memo(function ToolCallItem({
 
   return (
     <div
-      className={`font-mono text-xs flex items-center gap-1.5 py-0.5 min-w-0 ${
+      ref={cardRef}
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      data-tool-card
+      onClick={toggleExpanded}
+      onPointerDown={(event) => {
+        pointerDownRef.current = {
+          x: event.clientX,
+          y: event.clientY,
+          hadSelection: !!window.getSelection()?.toString(),
+        };
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (clickTimerRef.current !== null) {
+            window.clearTimeout(clickTimerRef.current);
+            clickTimerRef.current = null;
+          }
+          toggleImmediately();
+        }
+      }}
+      className={`cursor-pointer rounded-md border min-w-0 ${
         isError
-          ? "text-danger"
+          ? "border-danger/40 bg-danger-subtle/30"
           : isCompleted
-            ? "text-muted-fg"
+            ? "border-border bg-muted/25"
             : isPending
-              ? "text-warning"
-              : "text-fg"
+              ? "border-warning/40 bg-warning/10"
+              : "border-border bg-muted/25"
       }`}
     >
-      <span className="opacity-60 shrink-0">{icon}</span>
-      <span className="truncate">{label}</span>
-      {details && <span className="opacity-60 shrink-0">{details}</span>}
-      {isPending && <span className="animate-pulse shrink-0">...</span>}
+      {!expanded && (
+        <div
+          className={`w-full font-mono text-xs flex items-center gap-1.5 px-2.5 py-1 min-w-0 text-left ${
+            isError
+              ? "text-danger"
+              : isCompleted
+                ? "text-muted-fg"
+                : isPending
+                  ? "text-warning"
+                  : "text-fg"
+          }`}
+        >
+          <span className="opacity-60 shrink-0">{icon}</span>
+          <span className="truncate">{label}</span>
+          {details && <span className="opacity-60 shrink-0">{details}</span>}
+          {isPending && <span className="animate-pulse shrink-0">...</span>}
+          {canExpand && (
+            <ChevronDownIcon size="12px" className="ml-auto shrink-0" />
+          )}
+        </div>
+      )}
+      {expanded && (
+        <>
+          <pre
+            className={`max-w-full whitespace-pre-wrap break-words font-mono text-xs px-2.5 pt-2 pb-1 ${
+              isError ? "text-danger" : "text-muted-fg"
+            }`}
+          >
+            {toolExpandedLines(part).join("\n")}
+          </pre>
+          <div className="flex select-none items-center gap-1 px-2.5 pb-1.5 font-mono text-[11px] text-muted-fg/70">
+            <ChevronDownIcon size="12px" className="rotate-180 shrink-0" />
+            Click to collapse
+          </div>
+        </>
+      )}
     </div>
   );
+});
+
+const markdownPlugins = [remarkGfm];
+
+const cvSkipLayout = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "auto 150px",
+} as React.CSSProperties;
+
+const MemoizedMarkdown = memo(function MemoizedMarkdown({
+  content,
+}: {
+  content: string;
+}) {
+  return <Markdown remarkPlugins={markdownPlugins}>{content}</Markdown>;
 });
 
 const MessageItem = memo(function MessageItem({
@@ -714,6 +1130,8 @@ const MessageItem = memo(function MessageItem({
   pendingQuestions,
   onPermissionResolved,
   onQuestionResolved,
+  onUndo,
+  isOptimistic,
 }: {
   message: MessageWithParts;
   port: number;
@@ -723,6 +1141,8 @@ const MessageItem = memo(function MessageItem({
   pendingQuestions: QuestionRequest[];
   onPermissionResolved: (requestId: string) => void;
   onQuestionResolved: (requestId: string) => void;
+  onUndo?: (messageID: string) => void;
+  isOptimistic?: boolean;
 }) {
   const textContent = getMessageContent(message.parts);
   const isAssistant = message.info.role === "assistant";
@@ -734,66 +1154,81 @@ const MessageItem = memo(function MessageItem({
   const hasMainContent = !!(textContent || messageError);
 
   return (
-    <div className="py-3 px-6">
+    <>
       {hasMainContent && (
-        <div className="flex gap-2">
-          {isAssistant ? (
-            <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
-          ) : (
-            <IconUser size="16px" className="shrink-0 mt-1" />
-          )}
-          <div className="flex-1">
-            {!isAssistant && message.isQueued && (
-              <Badge intent="warning" className="mb-1">
-                Queued
-              </Badge>
+        <div className="py-3 px-6" style={cvSkipLayout}>
+          <div className="flex gap-2">
+            {isAssistant ? (
+              <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
+            ) : (
+              <IconUser size="16px" className="shrink-0 mt-1" />
             )}
-            <div
-              className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
-            >
-              {textContent && (
-                <Markdown remarkPlugins={[remarkGfm]}>{textContent}</Markdown>
+            <div className="flex-1 min-w-0">
+              {!isAssistant && message.isQueued && (
+                <Badge intent="warning" className="mb-1">
+                  Queued
+                </Badge>
+              )}
+              <div
+                className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
+              >
+                {textContent && <MemoizedMarkdown content={textContent} />}
+              </div>
+              {messageError && (
+                <ChatErrorAlert
+                  title="Message failed"
+                  message={messageError}
+                  className={textContent ? "mt-2" : ""}
+                />
               )}
             </div>
-            {messageError && (
-              <ChatErrorAlert
-                title="Message failed"
-                message={messageError}
-                className={textContent ? "mt-2" : ""}
-              />
+            {!isAssistant && !message.isQueued && !isOptimistic && onUndo && (
+              <button
+                type="button"
+                onClick={() => onUndo(message.info.id)}
+                className="shrink-0 mt-0.5 p-1 text-muted-fg hover:text-foreground transition-colors"
+                aria-label="Undo to this message"
+                title="Undo to this message"
+              >
+                <Undo2Icon size="15px" />
+              </button>
             )}
           </div>
         </div>
       )}
       {toolCalls.length > 0 && (
-        <div className={`${hasMainContent ? "mt-2 ml-6" : ""} space-y-0.5`}>
-          {toolCalls.map((part) => (
-            <ToolCallItem
-              key={part.callID || part.id}
-              part={part}
-              port={port}
-              provider={provider}
-              sessionId={sessionId}
-              pendingQuestions={pendingQuestions}
-              onQuestionResolved={onQuestionResolved}
-            />
-          ))}
+        <div className="py-3 px-6" style={cvSkipLayout}>
+          <div className="space-y-1">
+            {toolCalls.map((part) => (
+              <ToolCallItem
+                key={part.callID || part.id}
+                part={part}
+                port={port}
+                provider={provider}
+                sessionId={sessionId}
+                pendingQuestions={pendingQuestions}
+                onQuestionResolved={onQuestionResolved}
+              />
+            ))}
+          </div>
         </div>
       )}
       {messagePermissions.length > 0 && (
-        <div className={`${hasMainContent ? "mt-2 ml-6" : ""} space-y-2`}>
-          {messagePermissions.map((permission) => (
-            <PermissionRequestForm
-              key={permission.id}
-              permission={permission}
-              port={port}
-              provider={provider}
-              onResolved={onPermissionResolved}
-            />
-          ))}
+        <div className="py-3 px-6" style={cvSkipLayout}>
+          <div className="space-y-2">
+            {messagePermissions.map((permission) => (
+              <PermissionRequestForm
+                key={permission.id}
+                permission={permission}
+                port={port}
+                provider={provider}
+                onResolved={onPermissionResolved}
+              />
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 });
 
@@ -805,8 +1240,319 @@ function hasVisibleContent(message: MessageWithParts): boolean {
   return !!(textContent || hasToolCalls || messageError);
 }
 
+const SessionComposer = memo(function SessionComposer({
+  sessionId,
+  port,
+  commands,
+  isDesktop,
+  sending,
+  isSubmitting,
+  sendError,
+  attachments,
+  supportsAgentSelection,
+  submitLockRef,
+  onSubmit,
+  onAttachFiles,
+  onRemoveAttachment,
+}: {
+  sessionId: string;
+  port: number;
+  commands: SlashCommand[];
+  isDesktop: boolean;
+  sending: boolean;
+  isSubmitting: boolean;
+  sendError: string | null;
+  attachments: Attachment[];
+  supportsAgentSelection: boolean;
+  submitLockRef: { current: boolean };
+  onSubmit: (messageText: string, attachments: Attachment[]) => void;
+  onAttachFiles: (files: File[]) => void;
+  onRemoveAttachment: (id: string) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [wrapped, setWrapped] = useState(false);
+  const [fileResults, setFileResults] = useState<string[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const measureRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileMention = useFileMention();
+  const slashCommand = useSlashCommand();
+
+  const deferredInput = useDeferredValue(input);
+  useEffect(() => {
+    const t = textareaRef.current;
+    const m = measureRef.current;
+    if (!t || !m) return;
+    const cs = getComputedStyle(t);
+    const wrapperEl = t.parentElement?.parentElement;
+    const larguraCampo = wrapperEl?.clientWidth ?? t.clientWidth;
+    m.value = deferredInput;
+    m.style.width = `${Math.max(100, larguraCampo - 96)}px`;
+    m.style.lineHeight = cs.lineHeight;
+    m.style.fontSize = cs.fontSize;
+    m.style.fontFamily = cs.fontFamily;
+    m.style.padding = "0";
+    m.style.border = "0";
+    const linhas = Math.round(m.scrollHeight / parseFloat(cs.lineHeight));
+    setWrapped(linhas > 1);
+  }, [deferredInput]);
+
+  const submit = () => {
+    if (!sessionId || !port || submitLockRef.current) return;
+    const messageText = input.trim();
+    if (!messageText && attachments.length === 0) return;
+    onSubmit(messageText, attachments);
+    setInput("");
+  };
+
+  return (
+    <div className="border-t border-border p-3 pb-1 shrink-0 relative">
+      <FileMentionPopover
+        isOpen={fileMention.isOpen}
+        searchQuery={fileMention.searchQuery}
+        textareaRef={textareaRef}
+        mentionStart={fileMention.mentionStart}
+        selectedIndex={fileMention.selectedIndex}
+        onSelectedIndexChange={fileMention.setSelectedIndex}
+        onFilesChange={setFileResults}
+        onClose={fileMention.close}
+        onSelect={(filePath) => {
+          const newValue = fileMention.handleSelect(filePath, input);
+          setInput(newValue);
+        }}
+      />
+      <CommandPopover
+        isOpen={slashCommand.isOpen}
+        trigger={slashCommand.trigger}
+        searchQuery={slashCommand.searchQuery}
+        selectedIndex={slashCommand.selectedIndex}
+        commands={commands}
+        textareaRef={textareaRef}
+        onClose={slashCommand.close}
+        onSelectedIndexChange={slashCommand.setSelectedIndex}
+        onSelect={(value) => {
+          const newValue = slashCommand.handleSelect(value, input);
+          setInput(newValue);
+        }}
+      />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="w-full"
+      >
+        {sendError && (
+          <ChatErrorAlert
+            title="Message failed"
+            message={sendError}
+            className="mb-3"
+          />
+        )}
+        {attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {attachments.map((attachment) => (
+              <span
+                key={attachment.id}
+                className="flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary/40 py-0.5 pl-2.5 pr-1 text-xs text-fg"
+              >
+                <span className="truncate">{attachment.name}</span>
+                <span className="shrink-0 text-[10px] text-muted-fg">
+                  {formatFileSize(attachment.size)}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.name}`}
+                  className="shrink-0 rounded-full p-0.5 text-muted-fg transition-colors hover:bg-muted hover:text-foreground"
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                >
+                  <XMarkIcon className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="relative rounded-lg border border-input bg-background transition-colors hover:border-muted-fg/30 focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/20">
+          <div
+            className={`max-h-60 overflow-y-auto scroll-pb-2 ${
+              wrapped ? "mb-12" : ""
+            }`}
+          >
+            <Textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => {
+                const value = e.target.value;
+                setInput(value);
+                const cursorPos = e.target.selectionStart ?? value.length;
+                slashCommand.handleInputChange(value, cursorPos, commands);
+                if (fileMention.isOpen || value.includes("@")) {
+                  fileMention.handleInputChange(value, cursorPos);
+                }
+              }}
+              onSelect={(e) => {
+                const target = e.target as HTMLTextAreaElement;
+                if (fileMention.isOpen || input.includes("@")) {
+                  const cursorPos = target.selectionStart ?? input.length;
+                  fileMention.handleInputChange(input, cursorPos);
+                }
+              }}
+              onKeyDown={(e) => {
+                const handledSlash = slashCommand.handleKeyDown(
+                  e,
+                  slashCommand.trigger === "slash"
+                    ? commands.filter(
+                        (command) =>
+                          command.name
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()) ||
+                          (command.description ?? "")
+                            .toLowerCase()
+                            .includes(slashCommand.searchQuery.toLowerCase()),
+                      ).length
+                    : 1,
+                );
+                if (handledSlash) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    slashCommand.isOpen
+                  ) {
+                    const list =
+                      slashCommand.trigger === "slash"
+                        ? commands.filter(
+                            (command) =>
+                              command.name
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ) ||
+                              (command.description ?? "")
+                                .toLowerCase()
+                                .includes(
+                                  slashCommand.searchQuery.toLowerCase(),
+                                ),
+                          )
+                        : [{ name: "" }];
+                    const selected = list[slashCommand.selectedIndex];
+                    if (selected) {
+                      const newValue = slashCommand.handleSelect(
+                        slashCommand.trigger === "bang"
+                          ? "!"
+                          : `/${selected.name}`,
+                        input,
+                      );
+                      setInput(newValue);
+                    }
+                  }
+                  return;
+                }
+                const handled = fileMention.handleKeyDown(
+                  e,
+                  fileResults.length,
+                );
+                if (handled) {
+                  if (
+                    (e.key === "Enter" || e.key === "Tab") &&
+                    fileResults.length > 0
+                  ) {
+                    const selectedFile = fileResults[fileMention.selectedIndex];
+                    if (selectedFile) {
+                      const newValue = fileMention.handleSelect(
+                        selectedFile,
+                        input,
+                      );
+                      setInput(newValue);
+                    }
+                  }
+                  return;
+                }
+                if (isDesktop && e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  if (input.trim() && !submitLockRef.current) {
+                    submit();
+                  }
+                }
+              }}
+              onBlur={() => slashCommand.close()}
+              placeholder="Type a message... (use @ for files)"
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
+              rows={5}
+            />
+          </div>
+          <button
+            type="button"
+            aria-label="Attach files"
+            className="absolute left-1 bottom-1 z-10 flex size-9 items-center justify-center rounded-md text-muted-fg transition-colors hover:bg-muted/40 hover:text-foreground active:bg-muted/60"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <PaperclipIcon />
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept={ACCEPTED_ATTACHMENT_MIMES}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              onAttachFiles(files);
+            }}
+          />
+          {(input.trim() || attachments.length > 0) && (
+            <Button
+              type="submit"
+              isDisabled={
+                (!input.trim() && attachments.length === 0) || isSubmitting
+              }
+              isCircle
+              size="sq-sm"
+              aria-label={
+                isSubmitting
+                  ? "Sending message"
+                  : sending
+                    ? "Queue message"
+                    : "Send message"
+              }
+              className="absolute right-2 bottom-1"
+            >
+              {isSubmitting ? (
+                <span className="grid size-4 place-items-center">
+                  <Loader className="size-4" aria-label="Sending message" />
+                </span>
+              ) : sending ? (
+                <span className="grid size-4 place-items-center">
+                  <ListPlusIcon size="16px" />
+                </span>
+              ) : (
+                <span className="grid size-4 place-items-center">
+                  <SendIcon size="16px" />
+                </span>
+              )}
+            </Button>
+          )}
+          <textarea
+            ref={measureRef}
+            aria-hidden="true"
+            tabIndex={-1}
+            readOnly
+            rows={1}
+            className="invisible pointer-events-none absolute left-0 top-0 h-auto resize-none overflow-hidden"
+          />
+        </div>
+        <div className="mt-1 flex items-center gap-2">
+          {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
+          <ModelSelect />
+        </div>
+      </form>
+    </div>
+  );
+});
+
 function SessionPage() {
   const { id: sessionId } = Route.useParams();
+  const { isDesktop } = useMediaQuery();
   const instance = useInstanceStore((s) => s.instance);
   const port = instance?.port ?? 0;
   const provider = instance?.provider;
@@ -833,6 +1579,37 @@ function SessionPage() {
   const sessions: Session[] = sessionsData ?? [];
   const agents: Agent[] = agentsData ?? [];
   const currentSession = sessions.find((s) => s.id === sessionId);
+  const isChildSession = Boolean(currentSession?.parentID);
+  const revertMessageID = currentSession?.revert?.messageID;
+
+  const revertedMessages = useMemo(() => {
+    if (!revertMessageID) return [];
+    return messages.filter(
+      (message) =>
+        message.info.id >= revertMessageID &&
+        message.info.role === "user",
+    );
+  }, [messages, revertMessageID]);
+
+  const visibleMessages = useMemo(() => {
+    if (!revertMessageID) return messages;
+    return messages.filter((message) => message.info.id < revertMessageID);
+  }, [messages, revertMessageID]);
+
+  const optimisticMessageIDs = useMemo(() => {
+    const ids = new Set<string>();
+    for (const message of sessionMessages ?? []) {
+      if (message.metadata?.portalOptimistic === true) {
+        ids.add(message.id);
+      }
+    }
+    return ids;
+  }, [sessionMessages]);
+
+  const displayMessages = useMemo(
+    () => visibleMessages.filter((message) => hasVisibleContent(message)),
+    [visibleMessages],
+  );
 
   useEffect(() => {
     if (currentSession?.title) {
@@ -840,6 +1617,91 @@ function SessionPage() {
     }
     return () => setPageTitle(null);
   }, [currentSession?.title, setPageTitle]);
+
+  useEffect(() => {
+    const handleDocumentCopy = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+        return;
+      }
+      const range = selection.getRangeAt(0).cloneRange();
+      const allCards = [
+        ...document.querySelectorAll<HTMLElement>("[data-tool-card]"),
+      ];
+      const rangeRects = [...range.getClientRects()];
+      const expandable = new Set<HTMLElement>();
+      for (const card of allCards) {
+        if (card.getAttribute("aria-expanded") === "true") continue;
+        if (!range.intersectsNode(card)) continue;
+        const labelEl = card.querySelector<HTMLElement>("[class*='truncate']");
+        if (!labelEl) continue;
+        const truncated =
+          labelEl.scrollWidth > labelEl.clientWidth + 1 ||
+          labelEl.textContent?.endsWith("...");
+        if (!truncated) continue;
+        const tn = [...labelEl.childNodes].find(
+          (n): n is Text => n.nodeType === Node.TEXT_NODE,
+        );
+        if (!tn || tn.data.length === 0) continue;
+        const cardRect = card.getBoundingClientRect();
+        const onRow = rangeRects.filter(
+          (rc) => rc.bottom > cardRect.top && rc.top < cardRect.bottom,
+        );
+        if (onRow.length === 0) continue;
+        const selEndOnRow = Math.max(...onRow.map((rc) => rc.right));
+        const boxRight = labelEl.getBoundingClientRect().right;
+        const caretX = (i: number) => {
+          const caretRange = document.createRange();
+          caretRange.setStart(tn, i);
+          caretRange.collapse(true);
+          return caretRange.getBoundingClientRect().left;
+        };
+        let lo = 0;
+        let hi = tn.data.length;
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1;
+          if (caretX(mid) <= boxRight - 1) lo = mid;
+          else hi = mid - 1;
+        }
+        const cap = caretX(lo);
+        if (selEndOnRow < cap - 4) continue;
+        expandable.add(card);
+      }
+      if (expandable.size === 0) return;
+      const expandableCards = allCards.filter((card) => expandable.has(card));
+      const firstCard = expandableCards[0];
+      const lastCard = expandableCards[expandableCards.length - 1];
+      if (firstCard.contains(range.startContainer)) {
+        range.setStartBefore(firstCard);
+      }
+      if (lastCard.contains(range.endContainer)) {
+        range.setEndAfter(lastCard);
+      }
+      const fragment = range.cloneContents();
+      const clones = [...fragment.querySelectorAll("[data-tool-card]")];
+      const inRange = allCards.filter((card) => range.intersectsNode(card));
+      if (clones.length !== inRange.length) return;
+      inRange.forEach((card, i) => {
+        if (!expandable.has(card)) return;
+        const div = document.createElement("div");
+        div.textContent = toolCardLines.get(card)?.() ?? "";
+        clones[i].replaceWith(div);
+      });
+      const host = document.createElement("div");
+      host.setAttribute("aria-hidden", "true");
+      host.style.cssText =
+        "position:fixed;left:-9999px;top:0;pointer-events:none;white-space:pre;";
+      host.append(fragment);
+      document.body.append(host);
+      const text = host.innerText;
+      host.remove();
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", text || range.toString());
+    };
+    document.addEventListener("copy", handleDocumentCopy);
+    return () => document.removeEventListener("copy", handleDocumentCopy);
+  }, []);
 
   useEffect(() => {
     if (!supportsAgentSelection) return;
@@ -859,17 +1721,17 @@ function SessionPage() {
   ]);
 
   const [sendError, setSendError] = useState<string | null>(null);
-  const [input, setInput] = useState("");
+  const [dialog, setDialog] = useState<"mcps" | "status" | null>(null);
+  const [keyboardOffset, setKeyboardOffset] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [hasScrolledInitially, setHasScrolledInitially] = useState(false);
-  const [fileResults, setFileResults] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const submitLockRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const prevMessagesLengthRef = useRef(0);
-  const fileMention = useFileMention();
+  const { commands } = useCommands(currentSession?.directory);
 
   const messagesLoadError = messagesError?.message;
 
@@ -879,18 +1741,12 @@ function SessionPage() {
   const sending = useMemo(() => {
     const statusActive =
       sessionStatus?.type === "busy" || sessionStatus?.type === "retry";
-    const hasOpenAssistant = sessionMessages.some(
-      (message) =>
-        message.type === "assistant" &&
-        message.time.completed === undefined &&
-        message.content.length > 0,
-    );
     const hasPendingUser = sessionMessages.some(
       (message) =>
         message.type === "user" && message.metadata?.portalPending === true,
     );
 
-    return isSubmitting || statusActive || hasOpenAssistant || hasPendingUser;
+    return isSubmitting || statusActive || hasPendingUser;
   }, [isSubmitting, sessionMessages, sessionStatus?.type]);
 
   const pendingPermissions = useMemo(
@@ -947,7 +1803,41 @@ function SessionPage() {
   );
 
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = chatContainerRef.current;
+    if (!container) return;
+    container.scrollTo({
+      top: container.scrollHeight,
+      behavior: "smooth",
+    });
+  }, []);
+
+  useEffect(() => {
+    const visualViewport = window.visualViewport;
+    if (!visualViewport) return;
+
+    const handleVisualViewportChange = () => {
+      const diff = window.innerHeight - visualViewport.height;
+      if (diff > 0 && diff < window.innerHeight * 0.6) {
+        setKeyboardOffset(diff);
+      } else {
+        setKeyboardOffset(0);
+      }
+    };
+
+    visualViewport.addEventListener("resize", handleVisualViewportChange);
+    visualViewport.addEventListener("scroll", handleVisualViewportChange);
+    handleVisualViewportChange();
+
+    return () => {
+      visualViewport.removeEventListener(
+        "resize",
+        handleVisualViewportChange,
+      );
+      visualViewport.removeEventListener(
+        "scroll",
+        handleVisualViewportChange,
+      );
+    };
   }, []);
 
   const checkIfNearBottom = useCallback(() => {
@@ -1001,7 +1891,11 @@ function SessionPage() {
   }, [sessionId]);
 
   const sendMessage = useCallback(
-    async (messageText: string, messageId: string) => {
+    async (
+      messageText: string,
+      messageId: string,
+      messageAttachments: Attachment[] = [],
+    ) => {
       if (!sessionId || !port) return;
 
       try {
@@ -1024,7 +1918,13 @@ function SessionPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             messageID: messageId,
-            text: messageText,
+            text: messageText || undefined,
+            parts: messageAttachments.map((attachment) => ({
+              type: "file",
+              mime: attachment.mime,
+              filename: attachment.name,
+              url: attachment.url,
+            })),
             model:
               selectedModel.providerID && selectedModel.modelID
                 ? selectedModel
@@ -1079,24 +1979,239 @@ function SessionPage() {
     ],
   );
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const messageText = input.trim();
-    if (
-      !messageText ||
-      !sessionId ||
-      !port ||
-      sending ||
-      submitLockRef.current
-    ) {
+  const runBuiltinAction = useCallback(
+    async (action: string, messageID?: string) => {
+      if (!sessionId || !port) return;
+      try {
+        const response = await fetch(
+          `${apiBase}/session/${sessionId}/builtin`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action,
+              ...(messageID ? { messageID } : {}),
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const fallback = `Failed to run /${action} (${response.status}${
+            response.statusText ? ` ${response.statusText}` : ""
+          })`;
+          throw new Error(await getResponseErrorMessage(response, fallback));
+        }
+      } catch (err) {
+        setSendError(
+          err instanceof Error ? err.message : `Failed to run /${action}`,
+        );
+      } finally {
+        mutateSessionMessages(port, sessionId, provider);
+        mutateSessionStatuses();
+        mutateSessions();
+      }
+    },
+    [
+      apiBase,
+      sessionId,
+      port,
+      provider,
+      mutateSessionMessages,
+      mutateSessionStatuses,
+      mutateSessions,
+    ],
+  );
+
+  const handleUndoMessage = useCallback(
+    (messageID: string) => {
+      void runBuiltinAction("undo", messageID);
+    },
+    [runBuiltinAction],
+  );
+
+  const sharedListProps = useMemo(
+    () => ({
+      port,
+      provider,
+      sessionId,
+      pendingPermissions,
+      pendingQuestions,
+      optimisticMessageIDs,
+      onPermissionResolved: handlePermissionResolved,
+      onQuestionResolved: handleQuestionResolved,
+      onUndo: isChildSession ? undefined : handleUndoMessage,
+    }),
+    [
+      port,
+      provider,
+      sessionId,
+      pendingPermissions,
+      pendingQuestions,
+      optimisticMessageIDs,
+      handlePermissionResolved,
+      handleQuestionResolved,
+      isChildSession,
+      handleUndoMessage,
+    ],
+  );
+
+  const messageItemCache = useRef(
+    new Map<
+      string,
+      {
+        shared: typeof sharedListProps;
+        message: MessageWithParts;
+        el: React.ReactElement;
+      }
+    >(),
+  );
+
+  const messageNodes: React.ReactElement[] = [];
+  for (const message of displayMessages) {
+    const id = message.info.id;
+    const entry = messageItemCache.current.get(id);
+    if (entry && entry.shared === sharedListProps && entry.message === message) {
+      messageNodes.push(entry.el);
+      continue;
+    }
+    const el = (
+      <MessageItem
+        key={id}
+        message={message}
+        port={sharedListProps.port}
+        provider={sharedListProps.provider}
+        sessionId={sharedListProps.sessionId}
+        pendingPermissions={sharedListProps.pendingPermissions}
+        pendingQuestions={sharedListProps.pendingQuestions}
+        onPermissionResolved={sharedListProps.onPermissionResolved}
+        onQuestionResolved={sharedListProps.onQuestionResolved}
+        onUndo={sharedListProps.onUndo}
+        isOptimistic={sharedListProps.optimisticMessageIDs.has(id)}
+      />
+    );
+    messageItemCache.current.set(id, { shared: sharedListProps, message, el });
+    messageNodes.push(el);
+  }
+  if (messageItemCache.current.size > displayMessages.length * 1.5) {
+    const live = new Set(displayMessages.map((m) => m.info.id));
+    for (const key of messageItemCache.current.keys()) {
+      if (!live.has(key)) messageItemCache.current.delete(key);
+    }
+  }
+
+
+  const submitComposerMessage = useCallback(
+    async (rawText: string, composerAttachments: Attachment[]) => {
+      const messageText = rawText.trim();
+      if (
+        (!messageText && composerAttachments.length === 0) ||
+        !sessionId ||
+        !port ||
+        submitLockRef.current
+      ) {
+        return;
+      }
+
+      const wasSending = sending;
+      submitLockRef.current = true;
+      setIsSubmitting(true);
+      const messageId = createClientMessageId();
+      setSendError(null);
+
+    const isShellCommand = messageText.startsWith("!");
+    const firstLine = messageText.split("\n")[0];
+    const [firstWord, ...firstWordArgs] = firstLine.split(" ");
+    const isBuiltinCommand =
+      messageText.startsWith("/") &&
+      ["compact", "share", "unshare", "fork"].includes(
+        firstWord.slice(1),
+      );
+    const isSlashCommand =
+      !isBuiltinCommand &&
+      messageText.startsWith("/") &&
+      commands.some((command) => command.name === firstWord.slice(1));
+
+    if (firstWord === "/mcps" || firstWord === "/status") {
+      setDialog(firstWord.slice(1) as "mcps" | "status");
+      submitLockRef.current = false;
+      setIsSubmitting(false);
       return;
     }
 
-    submitLockRef.current = true;
-    setIsSubmitting(true);
-    const messageId = createClientMessageId();
-    setInput("");
-    setSendError(null);
+    if (isShellCommand || isSlashCommand || isBuiltinCommand) {
+      void (async () => {
+        try {
+          const [firstLineText, ...restLines] = messageText.split("\n");
+          const [, ...firstLineArgs] = firstLineText.split(" ");
+          const args =
+            firstLineArgs.join(" ") +
+            (restLines.length > 0 ? "\n" + restLines.join("\n") : "");
+
+          let url: string;
+          let body: Record<string, unknown>;
+
+          if (isShellCommand) {
+            url = `${apiBase}/session/${sessionId}/shell`;
+            body = { messageID: messageId, command: firstLineText.slice(1) };
+          } else if (isBuiltinCommand) {
+            await runBuiltinAction(firstWord.slice(1));
+            return;
+          } else {
+            url = `${apiBase}/session/${sessionId}/command`;
+            body = {
+              messageID: messageId,
+              command: firstWord.slice(1),
+              arguments: args,
+            };
+          }
+
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) {
+            const fallback = `Failed to run command (${response.status}${
+              response.statusText ? ` ${response.statusText}` : ""
+            })`;
+            throw new Error(await getResponseErrorMessage(response, fallback));
+          }
+        } catch (err) {
+          setSendError(
+            err instanceof Error ? err.message : "Failed to run command",
+          );
+        } finally {
+          submitLockRef.current = false;
+          setIsSubmitting(false);
+        }
+      })();
+
+      isNearBottomRef.current = true;
+      scrollToBottom();
+      return;
+    }
+
+    const optimisticParts: Part[] = [
+      ...composerAttachments.map((attachment) => ({
+        id: `${messageId}-part-${attachment.id}`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "file" as const,
+        mime: attachment.mime,
+        filename: attachment.name,
+        url: attachment.url,
+      })),
+    ];
+    if (messageText) {
+      optimisticParts.push({
+        id: `${messageId}-part`,
+        sessionID: sessionId,
+        messageID: messageId,
+        type: "text",
+        text: messageText,
+      });
+    }
 
     const optimisticMessage: MessageWithParts = {
       info: {
@@ -1107,27 +2222,35 @@ function SessionPage() {
         agent: "user",
         model: { providerID: "", modelID: "" },
       },
-      parts: [
-        {
-          id: `${messageId}-part`,
-          sessionID: sessionId,
-          messageID: messageId,
-          type: "text",
-          text: messageText,
-        },
-      ],
-      isQueued: sending,
+      parts: optimisticParts,
+      isQueued: wasSending,
     };
     addOptimisticMessage(port, sessionId, optimisticMessage, provider);
 
-    void sendMessage(messageText, messageId).finally(() => {
-      submitLockRef.current = false;
-      setIsSubmitting(false);
-    });
+    const messageAttachments = composerAttachments;
+    setAttachments([]);
+
+    void sendMessage(messageText, messageId, messageAttachments).finally(
+      () => {
+        submitLockRef.current = false;
+        setIsSubmitting(false);
+      },
+    );
 
     isNearBottomRef.current = true;
     scrollToBottom();
-  };
+    },
+    [
+      sending,
+      sessionId,
+      port,
+      apiBase,
+      commands,
+      runBuiltinAction,
+      sendMessage,
+      scrollToBottom,
+    ],
+  );
 
   useEffect(() => {
     submitLockRef.current = false;
@@ -1139,13 +2262,53 @@ function SessionPage() {
 
     const interval = window.setInterval(() => {
       mutateSessionMessages(port, sessionId, provider);
-    }, 1500);
+    }, 10000);
 
     return () => window.clearInterval(interval);
   }, [port, provider, sending, sessionId]);
 
+  const handleAttachFiles = useCallback((files: File[]) => {
+    for (const file of files) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        toast.error(
+          `${file.name} is too large (max ${formatFileSize(
+            MAX_ATTACHMENT_BYTES,
+          )})`,
+        );
+        continue;
+      }
+      if (!isAcceptedAttachmentMime(file.type)) {
+        toast.error(`${file.name} has an unsupported type`);
+        continue;
+      }
+      readFileAsDataUrl(file)
+        .then((url) => {
+          setAttachments((prev) => [
+            ...prev,
+            {
+              id: `${file.name}-${Date.now()}-${Math.random()
+                .toString(36)
+                .slice(2, 7)}`,
+              name: file.name,
+              mime: file.type,
+              url,
+              size: file.size,
+            },
+          ]);
+        })
+        .catch(() => toast.error(`Failed to read ${file.name}`));
+    }
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+  }, []);
+
   return (
-    <div className="flex h-full flex-col -m-4">
+    <div
+      className="-m-4 flex h-[calc(100%+2rem)] flex-col"
+      style={keyboardOffset > 0 ? { paddingBottom: keyboardOffset } : undefined}
+    >
       <div
         className="flex-1 overflow-auto overflow-x-hidden"
         ref={chatContainerRef}
@@ -1169,21 +2332,25 @@ function SessionPage() {
         )}
 
         <div className="divide-y divide-dashed divide-border overflow-x-hidden">
-          {messages
-            .filter((message) => hasVisibleContent(message))
-            .map((message) => (
-              <MessageItem
-                key={message.info.id}
-                message={message}
-                port={port}
-                provider={provider}
-                sessionId={sessionId}
-                pendingPermissions={pendingPermissions}
-                pendingQuestions={pendingQuestions}
-                onPermissionResolved={handlePermissionResolved}
-                onQuestionResolved={handleQuestionResolved}
-              />
-            ))}
+          {messageNodes}
+          {revertedMessages.length > 0 && (
+            <div className="flex items-center justify-between gap-3 px-6 py-4">
+              <span className="text-sm text-muted-fg">
+                {revertedMessages.length}{" "}
+                {revertedMessages.length === 1 ? "message" : "messages"}{" "}
+                reverted
+              </span>
+              {!isChildSession && (
+                <Button
+                  size="sm"
+                  intent="outline"
+                  onPress={() => void runBuiltinAction("redo")}
+                >
+                  Redo
+                </Button>
+              )}
+            </div>
+          )}
           {unlinkedPermissions.length > 0 && (
             <div className="px-6 py-4 space-y-2 border-t border-dashed border-border">
               {unlinkedPermissions.map((permission) => (
@@ -1210,113 +2377,37 @@ function SessionPage() {
         )}
       </div>
 
-      <div className="border-t border-border p-4 shrink-0 relative">
-        <FileMentionPopover
-          isOpen={fileMention.isOpen}
-          searchQuery={fileMention.searchQuery}
-          textareaRef={textareaRef}
-          mentionStart={fileMention.mentionStart}
-          selectedIndex={fileMention.selectedIndex}
-          onSelectedIndexChange={fileMention.setSelectedIndex}
-          onFilesChange={setFileResults}
-          onClose={fileMention.close}
-          onSelect={(filePath) => {
-            const newValue = fileMention.handleSelect(filePath, input);
-            setInput(newValue);
-          }}
-        />
-        <form onSubmit={handleSubmit} className="w-full">
-          {sendError && (
-            <ChatErrorAlert
-              title="Message failed"
-              message={sendError}
-              className="mb-3"
-            />
-          )}
-          <div className="relative">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => {
-                const value = e.target.value;
-                setInput(value);
-                if (fileMention.isOpen || value.includes("@")) {
-                  const cursorPos = e.target.selectionStart ?? value.length;
-                  fileMention.handleInputChange(value, cursorPos);
-                }
-              }}
-              onInput={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                const value = target.value;
-                if (value.includes("@")) {
-                  const cursorPos = target.selectionStart ?? value.length;
-                  fileMention.handleInputChange(value, cursorPos);
-                }
-              }}
-              onSelect={(e) => {
-                const target = e.target as HTMLTextAreaElement;
-                if (fileMention.isOpen || input.includes("@")) {
-                  const cursorPos = target.selectionStart ?? input.length;
-                  fileMention.handleInputChange(input, cursorPos);
-                }
-              }}
-              onKeyDown={(e) => {
-                const handled = fileMention.handleKeyDown(
-                  e,
-                  fileResults.length,
-                );
-                if (handled) {
-                  if (
-                    (e.key === "Enter" || e.key === "Tab") &&
-                    fileResults.length > 0
-                  ) {
-                    const selectedFile = fileResults[fileMention.selectedIndex];
-                    if (selectedFile) {
-                      const newValue = fileMention.handleSelect(
-                        selectedFile,
-                        input,
-                      );
-                      setInput(newValue);
-                    }
-                  }
-                  return;
-                }
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  if (input.trim() && !sending && !submitLockRef.current) {
-                    handleSubmit(e as unknown as React.FormEvent);
-                  }
-                }
-              }}
-              placeholder="Type your message... (use @ to mention files)"
-              className="min-h-32 max-h-32 w-full resize-none overflow-y-auto pr-14 pb-12"
-              rows={5}
-            />
-            <Button
-              type="submit"
-              isDisabled={!input.trim() || sending}
-              isCircle
-              size="sq-sm"
-              aria-label={sending ? "Sending message" : "Send message"}
-              className="absolute right-3 bottom-3"
-            >
-              {sending ? (
-                <span className="grid size-4 place-items-center">
-                  <Loader className="size-4" aria-label="Sending message" />
-                </span>
-              ) : (
-                <span className="grid size-4 place-items-center">
-                  <SendIcon size="16px" />
-                </span>
-              )}
-            </Button>
-          </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            {supportsAgentSelection && <AgentSelect sessionId={sessionId} />}
-            <ModelSelect />
-          </div>
-        </form>
-      </div>
+      {isChildSession ? (
+        <div className="border-t border-border px-4 py-3 shrink-0">
+          <p className="text-sm text-muted-fg">
+            Child session — read only. Open the parent session to continue.
+          </p>
+        </div>
+      ) : (
+      <SessionComposer
+        sessionId={sessionId}
+        port={port}
+        commands={commands}
+        isDesktop={isDesktop}
+        sending={sending}
+        isSubmitting={isSubmitting}
+        sendError={sendError}
+        attachments={attachments}
+        supportsAgentSelection={supportsAgentSelection}
+        submitLockRef={submitLockRef}
+        onSubmit={submitComposerMessage}
+        onAttachFiles={handleAttachFiles}
+        onRemoveAttachment={removeAttachment}
+      />
+      )}
+      <McpDialog
+        isOpen={dialog === "mcps"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      />
+      <StatusDialog
+        isOpen={dialog === "status"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      />
     </div>
   );
 }
