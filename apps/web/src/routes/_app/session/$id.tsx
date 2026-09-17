@@ -911,6 +911,8 @@ const ToolCallItem = memo(function ToolCallItem({
   sessionId,
   pendingQuestions,
   onQuestionResolved,
+  pendingTaskPermissions,
+  onPermissionResolved,
 }: {
   part: ToolPart;
   port: number;
@@ -918,6 +920,8 @@ const ToolCallItem = memo(function ToolCallItem({
   sessionId: string;
   pendingQuestions: QuestionRequest[];
   onQuestionResolved: (requestId: string) => void;
+  pendingTaskPermissions: PermissionRequest[];
+  onPermissionResolved: (requestId: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -931,6 +935,21 @@ const ToolCallItem = memo(function ToolCallItem({
   const isQuestionTool = (part.tool || "").toLowerCase() === "question";
   const questions = isQuestionTool ? parseToolQuestions(part) : [];
   const hasQuestions = questions.length > 0;
+  // Permissões pedidas pela sessão-filha (subagente) que esta `task` gerou.
+  // O `state.metadata.sessionId` do tool part aponta para a sessão-filha.
+  const taskSessionId =
+    (part.tool || "").toLowerCase() === "task" &&
+    part.state.status !== "pending"
+      ? (
+          part.state.metadata as { sessionId?: string } | undefined
+        )?.sessionId
+      : undefined;
+  const taskPermissions =
+    taskSessionId !== undefined
+      ? pendingTaskPermissions.filter(
+          (perm) => perm.sessionID === taskSessionId,
+        )
+      : [];
   const isCompleted = part.state.status === "completed";
   const isError = part.state.status === "error";
   const isPending =
@@ -1032,77 +1051,92 @@ const ToolCallItem = memo(function ToolCallItem({
   }
 
   return (
-    <div
-      ref={cardRef}
-      role="button"
-      tabIndex={0}
-      aria-expanded={expanded}
-      data-tool-card
-      onClick={toggleExpanded}
-      onPointerDown={(event) => {
-        pointerDownRef.current = {
-          x: event.clientX,
-          y: event.clientY,
-          hadSelection: !!window.getSelection()?.toString(),
-        };
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          if (clickTimerRef.current !== null) {
-            window.clearTimeout(clickTimerRef.current);
-            clickTimerRef.current = null;
+    <>
+      <div
+        ref={cardRef}
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        data-tool-card
+        onClick={toggleExpanded}
+        onPointerDown={(event) => {
+          pointerDownRef.current = {
+            x: event.clientX,
+            y: event.clientY,
+            hadSelection: !!window.getSelection()?.toString(),
+          };
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (clickTimerRef.current !== null) {
+              window.clearTimeout(clickTimerRef.current);
+              clickTimerRef.current = null;
+            }
+            toggleImmediately();
           }
-          toggleImmediately();
-        }
-      }}
-      className={`cursor-pointer rounded-md border min-w-0 ${
-        isError
-          ? "border-danger/40 bg-danger-subtle/30"
-          : isCompleted
-            ? "border-border bg-muted/25"
-            : isPending
-              ? "border-warning/40 bg-warning/10"
-              : "border-border bg-muted/25"
-      }`}
-    >
-      {!expanded && (
-        <div
-          className={`w-full font-mono text-xs flex items-center gap-1.5 px-2.5 py-1 min-w-0 text-left ${
-            isError
-              ? "text-danger"
-              : isCompleted
-                ? "text-muted-fg"
-                : isPending
-                  ? "text-warning"
-                  : "text-fg"
-          }`}
-        >
-          <span className="opacity-60 shrink-0">{icon}</span>
-          <span className="truncate">{label}</span>
-          {details && <span className="opacity-60 shrink-0">{details}</span>}
-          {isPending && <span className="animate-pulse shrink-0">...</span>}
-          {canExpand && (
-            <ChevronDownIcon size="12px" className="ml-auto shrink-0" />
-          )}
-        </div>
-      )}
-      {expanded && (
-        <>
-          <pre
-            className={`max-w-full whitespace-pre-wrap break-words font-mono text-xs px-2.5 pt-2 pb-1 ${
-              isError ? "text-danger" : "text-muted-fg"
+        }}
+        className={`cursor-pointer rounded-md border min-w-0 ${
+          isError
+            ? "border-danger/40 bg-danger-subtle/30"
+            : isCompleted
+              ? "border-border bg-muted/25"
+              : isPending
+                ? "border-warning/40 bg-warning/10"
+                : "border-border bg-muted/25"
+        }`}
+      >
+        {!expanded && (
+          <div
+            className={`w-full font-mono text-xs flex items-center gap-1.5 px-2.5 py-1 min-w-0 text-left ${
+              isError
+                ? "text-danger"
+                : isCompleted
+                  ? "text-muted-fg"
+                  : isPending
+                    ? "text-warning"
+                    : "text-fg"
             }`}
           >
-            {toolExpandedLines(part).join("\n")}
-          </pre>
-          <div className="flex select-none items-center gap-1 px-2.5 pb-1.5 font-mono text-[11px] text-muted-fg/70">
-            <ChevronDownIcon size="12px" className="rotate-180 shrink-0" />
-            Click to collapse
+            <span className="opacity-60 shrink-0">{icon}</span>
+            <span className="truncate">{label}</span>
+            {details && <span className="opacity-60 shrink-0">{details}</span>}
+            {isPending && <span className="animate-pulse shrink-0">...</span>}
+            {canExpand && (
+              <ChevronDownIcon size="12px" className="ml-auto shrink-0" />
+            )}
           </div>
-        </>
+        )}
+        {expanded && (
+          <>
+            <pre
+              className={`max-w-full whitespace-pre-wrap break-words font-mono text-xs px-2.5 pt-2 pb-1 ${
+                isError ? "text-danger" : "text-muted-fg"
+              }`}
+            >
+              {toolExpandedLines(part).join("\n")}
+            </pre>
+            <div className="flex select-none items-center gap-1 px-2.5 pb-1.5 font-mono text-[11px] text-muted-fg/70">
+              <ChevronDownIcon size="12px" className="rotate-180 shrink-0" />
+              Click to collapse
+            </div>
+          </>
+        )}
+      </div>
+      {taskPermissions.length > 0 && (
+        <div className="space-y-1.5">
+          {taskPermissions.map((permission) => (
+            <PermissionRequestForm
+              key={permission.id}
+              permission={permission}
+              port={port}
+              provider={provider}
+              onResolved={onPermissionResolved}
+            />
+          ))}
+        </div>
       )}
-    </div>
+    </>
   );
 });
 
@@ -1132,6 +1166,7 @@ const MessageItem = memo(function MessageItem({
   onQuestionResolved,
   onUndo,
   isOptimistic,
+  pendingTaskPermissions,
 }: {
   message: MessageWithParts;
   port: number;
@@ -1143,6 +1178,7 @@ const MessageItem = memo(function MessageItem({
   onQuestionResolved: (requestId: string) => void;
   onUndo?: (messageID: string) => void;
   isOptimistic?: boolean;
+  pendingTaskPermissions: PermissionRequest[];
 }) {
   const textContent = getMessageContent(message.parts);
   const isAssistant = message.info.role === "assistant";
@@ -1208,6 +1244,8 @@ const MessageItem = memo(function MessageItem({
                 sessionId={sessionId}
                 pendingQuestions={pendingQuestions}
                 onQuestionResolved={onQuestionResolved}
+                pendingTaskPermissions={pendingTaskPermissions}
+                onPermissionResolved={onPermissionResolved}
               />
             ))}
           </div>
@@ -1757,6 +1795,14 @@ function SessionPage() {
     [permissionsData, sessionId],
   );
 
+  // Permissões de sessões-filhas (subagentes): não pertencem a `sessionId`,
+  // mas a sessão-pai exibe as que correspondem às suas tool parts `task`
+  // (via `state.metadata.sessionId`) logo abaixo do card amarelo da task.
+  const pendingTaskPermissions = useMemo(
+    () => ((permissionsData ?? []) as PermissionRequest[]),
+    [permissionsData],
+  );
+
   const pendingQuestions = useMemo(
     () =>
       ((questionsData ?? []) as QuestionRequest[]).filter(
@@ -2040,6 +2086,7 @@ function SessionPage() {
       onPermissionResolved: handlePermissionResolved,
       onQuestionResolved: handleQuestionResolved,
       onUndo: isChildSession ? undefined : handleUndoMessage,
+      pendingTaskPermissions,
     }),
     [
       port,
@@ -2052,6 +2099,7 @@ function SessionPage() {
       handleQuestionResolved,
       isChildSession,
       handleUndoMessage,
+      pendingTaskPermissions,
     ],
   );
 
@@ -2087,6 +2135,7 @@ function SessionPage() {
         onQuestionResolved={sharedListProps.onQuestionResolved}
         onUndo={sharedListProps.onUndo}
         isOptimistic={sharedListProps.optimisticMessageIDs.has(id)}
+        pendingTaskPermissions={sharedListProps.pendingTaskPermissions}
       />
     );
     messageItemCache.current.set(id, { shared: sharedListProps, message, el });

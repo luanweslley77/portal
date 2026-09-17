@@ -882,3 +882,33 @@ Replicar o composer do ChatGPT web: texto em **linha única entre os botões** (
 - `bun run build` em `apps/web` → ok; `cp` para `~/.bun/install/global/node_modules/openportal/web` + restart via `term-cli` (portal em `:3000`/backend `:4000`).
 - Teste E2E (CDP, portal em `http://localhost:3000`, sessão nova `ses_fb7cd3a52ffeIIdB4rq52NKeuu`, prompt "two bash echo hello1/hello2"): antes do fix, com `dedupingInterval:2000`, o 1º bash ficaria amarelo durante o `reasoning` do 2º; após o fix, `chrome-devtools_evaluate_script` `document.querySelectorAll("[data-tool-card]")` mostra `pending:false` (cinza) imediatamente após cada `completed`, com `Thinking...` ainda visível entre os steps — amarelo e thinking desacoplados, como no TUI.
 - Permissão: `permission.asked` continua via `mutatePermissions` direto; com a tool atualizada direto, o `tool.messageID` já existe no cache e a permissão cai em `messagePermissions` em vez de depender do fetch para virar `unlinked`.
+
+## 21. Permissão de subagente (child session) invisível na sessão-pai
+
+### 21.1 Sintoma (relato do usuário)
+
+- Quando um subagente (`task`) pede permissão, nada aparece na sessão-pai — ela mostra o card amarelo da task, mas sem as opções Allow/Deny. A permissão ficava visível só abrindo a sessão-filha.
+- Analogia: o aviso do guarda (subagente) chegava com o crachá da filial (`sessionID` da filha), mas a portaria do prédio principal só procurava crachás da matriz (`filter item.sessionID === sessionId`, `apps/web/src/routes/_app/session/$id.tsx:1752`) e o crachá da filial não casava com nenhuma message (`perm.tool.messageID === message.info.id`).
+
+### 21.2 Medição (dados reais, instância `dolphin-plugins`)
+
+- Tool part `task` no pai (`GET /api/opencode/4000/session/{pai}/messages`) carrega em `state.metadata`: `{ parentSessionId, sessionId (filha), model, truncated }` (48 task parts na sessão `ses_f639c6616ffett607ToDBRHve7`).
+- O metadata sobrevive nos dois caminhos do cliente: fetch (`use-session-messages.ts:769` `legacyToolState()` mapeia `structured → metadata`) e SSE (`use-opencode-events.ts:241` `toolStateToSessionState()` mantém `structured = state.metadata`).
+- `permission.asked` traz `sessionID` = filha; o endpoint `POST /permission/{requestID}/reply` é global (não depende da sessão) — dá para responder do pai.
+
+### 21.3 Fix (nada mais muda na UI)
+
+1. **`apps/web/src/routes/_app/session/$id.tsx` — SessionPage**: novo memo `pendingTaskPermissions` = todas as permissões pendentes (sem filtro por sessão; chega no `sharedListProps` e no `messageItemCache`). Filtro `pendingPermissions` do pai **inalterado**.
+2. **`MessageItem`**: novo prop `pendingTaskPermissions`, repassado ao `ToolCallItem`.
+3. **`ToolCallItem`** (~930): se `part.tool === "task"` e status ≠ `pending`, lê `part.state.metadata.sessionId`; permissões cujo `sessionID` casa rendem `PermissionRequestForm` (mesmo componente, mesmos 3 botões) como irmão **abaixo** do card amarelo — fora do div clicável, para os botões não dispararem o toggle de expand. Sem metadata (task ainda pending, ou provider sem task): no-op, comportamento atual.
+4. Resolve: `onPermissionResolved` existente remove via SWR + SSE `permission.replied` limpa em todas as views.
+
+Limites: task pendente ainda sem metadata não exibe (irrelevante — permissão só existe com task running); permissão de neto aparece no card da task da view do filho, não borbulha no avô.
+
+### 21.4 Verificação
+
+- `npx tsc --noEmit` → 3 erros pré-existentes, sem novos; `bun run build` + `scripts/deploy.sh` → `OK :3000 -> index-D6pnUSUq.js`.
+- E2E real (CDP, instância isolada `opencode serve --port 4101` em projeto de teste com `permission.bash = "ask"`): prompt no pai pedindo `task` (@general) com bash → filha `ses_f505cfc3...` pediu permissão. No DOM, o card amarelo da task (`border-warning/40 bg-warning/10`, retângulo top 123–149) tem o `PermissionRequestForm` imediatamente abaixo (top 157–281) com "Allow once"/"Allow always"/"Reject" visíveis no viewport (937px).
+- Clique real em **Allow once**: `/permissions` → `[]`, card removido do DOM, task vira cinza (`border-border bg-muted/25`) e a filha executa (`bash: completed`, output `E2E_PERM_UI_42`).
+- Segundo ciclo com **Reject**: `/permissions` → `[]`, card removido, task vira vermelha (`border-danger/40`) e a filha recebe `error: The user rejected permission to use this specific tool call.`
+- Sessões/arquivos de teste removidos ao fim (47 sessões `e2e-*` + descendentes, projeto temporário, `.env` de teste).
