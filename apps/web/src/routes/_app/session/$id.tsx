@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   memo,
   useCallback,
@@ -1590,6 +1590,7 @@ const SessionComposer = memo(function SessionComposer({
 
 function SessionPage() {
   const { id: sessionId } = Route.useParams();
+  const navigate = useNavigate();
   const { isDesktop } = useMediaQuery();
   const instance = useInstanceStore((s) => s.instance);
   const port = instance?.port ?? 0;
@@ -2047,6 +2048,16 @@ function SessionPage() {
           })`;
           throw new Error(await getResponseErrorMessage(response, fallback));
         }
+
+        const result = (await response.json().catch(() => null)) as {
+          session?: Session;
+        } | null;
+        if (action === "fork" && result?.session?.id) {
+          navigate({
+            to: "/session/$id",
+            params: { id: result.session.id },
+          });
+        }
       } catch (err) {
         setSendError(
           err instanceof Error ? err.message : `Failed to run /${action}`,
@@ -2062,6 +2073,7 @@ function SessionPage() {
       sessionId,
       port,
       provider,
+      navigate,
       mutateSessionMessages,
       mutateSessionStatuses,
       mutateSessions,

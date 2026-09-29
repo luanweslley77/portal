@@ -175,9 +175,20 @@ export default defineHandler(async (event) => {
       case "unshare":
         await client.session.unshare({ sessionID: id });
         break;
-      case "fork":
-        await client.session.fork({ sessionID: id });
-        break;
+      case "fork": {
+        const result = await client.session.fork({ sessionID: id });
+        const error = firstErrorMessage(result);
+        if (error) {
+          throw new HTTPError(`Failed to run /fork: ${error}`, {
+            status: 500,
+          });
+        }
+        return {
+          accepted: true,
+          action: body.action,
+          session: result.data,
+        };
+      }
     }
   } catch (error) {
     if (error instanceof HTTPError) throw error;
