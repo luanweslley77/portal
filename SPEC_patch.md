@@ -912,3 +912,40 @@ Limites: task pendente ainda sem metadata não exibe (irrelevante — permissão
 - Clique real em **Allow once**: `/permissions` → `[]`, card removido do DOM, task vira cinza (`border-border bg-muted/25`) e a filha executa (`bash: completed`, output `E2E_PERM_UI_42`).
 - Segundo ciclo com **Reject**: `/permissions` → `[]`, card removido, task vira vermelha (`border-danger/40`) e a filha recebe `error: The user rejected permission to use this specific tool call.`
 - Sessões/arquivos de teste removidos ao fim (47 sessões `e2e-*` + descendentes, projeto temporário, `.env` de teste).
+
+## 22. Review do PR #2: fila por ID, escopo do deploy, bang `!` e `/fork`
+
+### 22.1 Sintoma (review externo, confirmado no código)
+
+1. **Fila identificada por texto** (`queuedTexts: Map<key, Set<text>>`): duas mensagens iguais enfileiradas viravam uma identidade só; a reconciliação/`upsertPromptedMessage` removia as duas otimistas de uma vez (perda de estado local).
+2. **`deploy.sh` matava qualquer `opencode serve` da máquina** (`pkill -9 -f "opencode serve"`), inclusive backends que não pertencem ao Portal, e com `-9` direto.
+3. **Selecionar a sugestão `!` do popover apagava o comando digitado**: `handleSelect()` sempre fatiava `startIndex + 1 + searchQuery.length`; com `!git`, `searchQuery = "git"` → virava `! `. Pior: com `!ls` (sem espaço) o popover está aberto e o Enter era engolido (virava `! `, não enviava).
+4. **`/fork` criava a child session e descartava o retorno**: `builtin.ts` fazia `await client.session.fork(...)` sem usar `result.data`; o front não navegava (diferente do TUI).
+
+### 22.2 Medição (SSE real do opencode 1.18.33)
+
+- Evento `session.next.prompted` no wire (`GET /event`): `"id":"evt_..."` e o id da mensagem está em `properties.messageID` — medido criando sessão v2 (`POST /api/session`) e prompt (`POST /api/session/{id}/prompt`). O código antigo usava `event.id` como id da mensagem (errado no opencode; por isso existia o fallback por texto).
+- Sessões v1 (rota que o Portal usa: `prompt_async`) **não emitem** `session.next.*` — os handlers desses eventos servem sessões v2/TUI, claude e codex.
+- `claude-client.ts` emite `session.next.prompted` com `id = messageID` (`emit(type, props, user.id)`); codex usa `item.id` (sem relação com o messageID do cliente). Logo a extração é `properties.messageID ?? event.id`.
+- `properties.timestamp` chega como string ISO no wire v2 (`"2026-09-29T15:39:16.150Z"`) — normalizado para número (senão `sortSessionMessages` compara `NaN`).
+
+### 22.3 Fix
+
+1. **`apps/web/src/hooks/use-session-messages.ts`** — fila agora é `Map<key, Map<messageID, text>>`:
+   - `markMessageQueued(key, id, text)` / `clearMessageQueued(key, id)` / `isMessageQueued(key, id)`.
+   - `reapplyQueuedMetadata` casa por `message.id`; o fallback por texto só marca quando há **exatamente uma** entrada de fila com aquele texto **e** uma única mensagem com ele (nunca confunde duplicatas).
+   - `reconcileOptimisticMessage`: `wasQueued` agora vem da fila (antes de remover), remoção por id; sem mais filtro por texto que levava as duas.
+   - `settleOptimisticMessage`/`removeOptimisticMessage` limpam pelo id.
+2. **`removeOptimisticUserMessages(messages, key, id, text)`** (novo, exportado): remove a otimista por id; se o id não existir (provider que gera id próprio, ex. codex), remove apenas a **única** otimista com aquele texto (e limpa a entrada de fila dela). Ambíguo → não remove.
+3. **`apps/web/src/hooks/use-opencode-events.ts`** — `promptedMessageId()` (`properties.messageID ?? event.id`), `promptedTimestamp()` (número ou ISO → ms) e `upsertPromptedMessage` usando id + o helper acima.
+4. **`scripts/deploy.sh`** — captura os PIDs dos `opencode serve` descendentes das sessões hospedeiras **antes** de matar as UIs (depois o CLI pai morre e a árvore se perde), mata UI/CLI como antes e os backends com `TERM` → espera 5s → `KILL` só nos sobreviventes. Bônus descoberto no teste: `C-c` logo após `tmux new-session` matava o shell ainda iniciando (branch "nenhuma sessão encontrada") — agora pula o `C-c` na sessão recém-criada.
+5. **`apps/web/src/hooks/use-slash-command.ts`** — `handleSelect` insere `!${searchQuery}` quando `trigger === "bang"` (o item `!` é modo, não substituição de comando). `!ls` + Enter → `!ls `.
+6. **`builtin.ts`** — case `fork` retorna `{ accepted, action, session }` com `result.data` (erro → HTTP 500 com mensagem). **`$id.tsx`** — `runBuiltinAction` lê a resposta e, em `fork`, `navigate({ to: "/session/$id", params })` para a child.
+
+### 22.4 Verificação
+
+- `npx tsc --noEmit` → 3 erros pré-existentes, nenhum novo.
+- Cenário de duplicatas: teste temporário com `bun test` e `swr` mockado (5 casos) — remoção por id não leva a gêmea; fallback por texto não remove com duas otimistas iguais; reconcile preserva a outra; reapply não marca mensagem antiga; não-enfileirada não ganha flag. Arquivo removido após a validação.
+- `deploy.sh` ×3 ao vivo: `opencode serve --port 4099` fora do Portal sobreviveu aos 3 deploys; backend do Portal (`:4000`) foi capturado e respawnado (18460→18869→19089); sem o `pkill` global.
+- E2E no browser (390x844): `!ls` + Enter manteve `!ls ` (antes virava `! `); `/fork` via composer navegou para a child criada (`POST .../builtin` → 200 `{accepted, action, session}`); duas mensagens idênticas enfileiradas ("probe duplicado") com sessão ocupada — ambas visíveis, a 1ª processada (assistant "pronto") sem derrubar a 2ª.
+- Sessões de teste deletadas; servidor `:4099` e sessão tmux `probe` removidos.
