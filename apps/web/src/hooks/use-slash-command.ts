@@ -111,7 +111,8 @@ export function useSlashCommand(): UseSlashCommandResult {
 
     const prefix = currentValue.slice(0, startIndex);
     const after = currentValue.slice(startIndex + 1 + searchQuery.length);
-    const newValue = `${prefix}${value} ${after}`;
+    const inserted = trigger === "bang" ? `!${searchQuery}` : value;
+    const newValue = `${prefix}${inserted} ${after}`;
 
     close();
     return newValue;
