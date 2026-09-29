@@ -21,6 +21,7 @@ import {
   clearMessageQueued,
   getMessagesKey,
   recordCompletedMessage,
+  removeOptimisticUserMessages,
   sortSessionMessages,
 } from "@/hooks/use-session-messages";
 import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
@@ -449,34 +450,53 @@ function schedulePartDeltaFallback(
   partDeltaFallbackTimers.set(key, timer);
 }
 
+function promptedMessageId(
+  event: Extract<RuntimeEvent, { type: "session.next.prompted" }>,
+) {
+  const properties = event.properties as { messageID?: unknown };
+  if (
+    typeof properties.messageID === "string" &&
+    properties.messageID.length > 0
+  ) {
+    return properties.messageID;
+  }
+  return event.id;
+}
+
+function promptedTimestamp(
+  event: Extract<RuntimeEvent, { type: "session.next.prompted" }>,
+) {
+  const timestamp = event.properties.timestamp as unknown;
+  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+    return timestamp;
+  }
+  if (typeof timestamp === "string") {
+    const parsed = Date.parse(timestamp);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
 function upsertPromptedMessage(
   messages: SessionMessage[],
   key: string,
   event: Extract<RuntimeEvent, { type: "session.next.prompted" }>,
 ): SessionMessage[] {
   const text = event.properties.prompt.text;
-  const dequeue = (items: SessionMessage[]) =>
-    items.filter(
-      (message) =>
-        !(
-          message.type === "user" &&
-          message.text === text &&
-          message.metadata?.portalQueued === true
-        ),
-    );
+  const messageId = promptedMessageId(event);
 
-  clearMessageQueued(key, text);
+  clearMessageQueued(key, messageId);
 
   return upsertMessage(
-    removeMatchingOptimisticUser(dequeue(messages), text),
+    removeOptimisticUserMessages(messages, key, messageId, text),
     {
-      id: event.id,
+      id: messageId,
       type: "user",
       text,
       files: event.properties.prompt.files,
       agents: event.properties.prompt.agents,
       time: {
-        created: event.properties.timestamp,
+        created: promptedTimestamp(event),
       },
     },
   );
@@ -651,20 +671,6 @@ function completeAssistantById(
   if (assistant.type !== "assistant") return messages;
   recordCompletedMessage(key, assistant.id, timestamp, assistant.finish);
   return replaceMessageAt(messages, idx, updater(assistant as SessionMessageAssistant));
-}
-
-function removeMatchingOptimisticUser(
-  messages: SessionMessage[],
-  text: string,
-) {
-  return messages.filter(
-    (message) =>
-      !(
-        message.type === "user" &&
-        message.text === text &&
-        message.metadata?.portalOptimistic === true
-      ),
-  );
 }
 
 function revalidateInstance(port: number, provider?: BackendProvider) {

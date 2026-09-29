@@ -60,7 +60,7 @@ const EMPTY_TOKENS = {
   },
 };
 
-const queuedTexts = new Map<string, Set<string>>();
+const queuedMessages = new Map<string, Map<string, string>>();
 
 const legacyConversionCache = new Map<
   string,
@@ -153,21 +153,29 @@ function sessionMessagesToLegacyCached(
   return out;
 }
 
-function getQueuedTexts(key: string) {
-  let set = queuedTexts.get(key);
-  if (!set) {
-    set = new Set();
-    queuedTexts.set(key, set);
+function getQueuedMessages(key: string) {
+  let map = queuedMessages.get(key);
+  if (!map) {
+    map = new Map();
+    queuedMessages.set(key, map);
   }
-  return set;
+  return map;
 }
 
-export function markMessageQueued(key: string, text: string) {
-  getQueuedTexts(key).add(text);
+export function markMessageQueued(
+  key: string,
+  messageId: string,
+  text: string,
+) {
+  getQueuedMessages(key).set(messageId, text);
 }
 
-export function clearMessageQueued(key: string, text: string) {
-  getQueuedTexts(key).delete(text);
+export function clearMessageQueued(key: string, messageId: string) {
+  getQueuedMessages(key).delete(messageId);
+}
+
+export function isMessageQueued(key: string, messageId: string) {
+  return getQueuedMessages(key).has(messageId);
 }
 
 const fetcher = async (url: string): Promise<SessionMessage[]> => {
@@ -302,10 +310,29 @@ function normalizeFetchedMessages(data: unknown) {
 }
 
 export function reapplyQueuedMetadata(key: string, messages: SessionMessage[]) {
-  const queued = getQueuedTexts(key);
+  const queued = getQueuedMessages(key);
   if (queued.size === 0) return messages;
+
+  const queuedTextCounts = new Map<string, number>();
+  for (const text of queued.values()) {
+    queuedTextCounts.set(text, (queuedTextCounts.get(text) ?? 0) + 1);
+  }
+  const messageTextCounts = new Map<string, number>();
+  for (const message of messages) {
+    if (message.type !== "user") continue;
+    messageTextCounts.set(
+      message.text,
+      (messageTextCounts.get(message.text) ?? 0) + 1,
+    );
+  }
+
   return messages.map((message) => {
-    if (message.type !== "user" || !queued.has(message.text)) return message;
+    if (message.type !== "user") return message;
+    const tracked =
+      queued.has(message.id) ||
+      (queuedTextCounts.get(message.text) === 1 &&
+        messageTextCounts.get(message.text) === 1);
+    if (!tracked) return message;
     return {
       ...message,
       metadata: {
@@ -941,7 +968,7 @@ export function addOptimisticMessage(
   };
 
   if (message.isQueued === true) {
-    markMessageQueued(key, optimisticMessage.text);
+    markMessageQueued(key, optimisticMessage.id, optimisticMessage.text);
   }
 
   mutate(
@@ -954,9 +981,39 @@ export function addOptimisticMessage(
   );
 
   return () => {
-    clearMessageQueued(key, optimisticMessage.text);
+    clearMessageQueued(key, optimisticMessage.id);
     mutate(key, previousMessages, { revalidate: false });
   };
+}
+
+export function removeOptimisticUserMessages(
+  messages: SessionMessage[],
+  key: string,
+  messageId: string,
+  text: string,
+) {
+  const exact = messages.filter(
+    (message) =>
+      message.type === "user" &&
+      message.metadata?.portalOptimistic === true &&
+      message.id === messageId,
+  );
+  if (exact.length > 0) {
+    clearMessageQueued(key, messageId);
+    return messages.filter((message) => !exact.includes(message));
+  }
+  if (!text) return messages;
+
+  const candidates = messages.filter(
+    (message) =>
+      message.type === "user" &&
+      message.metadata?.portalOptimistic === true &&
+      message.text === text,
+  );
+  if (candidates.length !== 1) return messages;
+
+  clearMessageQueued(key, candidates[0].id);
+  return messages.filter((message) => message !== candidates[0]);
 }
 
 export function reconcileOptimisticMessage(
@@ -972,25 +1029,16 @@ export function reconcileOptimisticMessage(
     key,
     (current: SessionMessage[] | undefined) => {
       const messages = current ?? [];
-      const optimistic = messages.find(
-        (message) =>
-          message.id === optimisticId ||
-          (actualMessage.type === "user" &&
-            message.type === "user" &&
-            message.text === actualMessage.text &&
-            message.metadata?.portalOptimistic === true),
+      const wasQueued =
+        isMessageQueued(key, optimisticId) ||
+        (actualMessage.type === "user" &&
+          isMessageQueued(key, actualMessage.id));
+      const withoutOptimistic = removeOptimisticUserMessages(
+        messages,
+        key,
+        optimisticId,
+        actualMessage.type === "user" ? actualMessage.text : "",
       );
-      const wasQueued = optimistic?.metadata?.portalQueued === true;
-
-      const withoutOptimistic = messages.filter((message) => {
-        if (message.id === optimisticId) return false;
-        return !(
-          actualMessage.type === "user" &&
-          message.type === "user" &&
-          message.text === actualMessage.text &&
-          message.metadata?.portalOptimistic === true
-        );
-      });
 
       const reconciled =
         actualMessage.type === "user" && wasQueued
@@ -1004,7 +1052,7 @@ export function reconcileOptimisticMessage(
           : actualMessage;
 
       if (actualMessage.type === "user" && wasQueued) {
-        markMessageQueued(key, actualMessage.text);
+        markMessageQueued(key, actualMessage.id, actualMessage.text);
       }
 
       return sortSessionMessages([...withoutOptimistic, reconciled]);
@@ -1028,11 +1076,7 @@ export function settleOptimisticMessage(
       const settled = current.map((message) => {
         if (message.id !== messageId || message.type !== "user") return message;
 
-        const wasQueued = message.metadata?.portalQueued === true;
-
-        if (!wasQueued) {
-          clearMessageQueued(key, message.text);
-        }
+        const wasQueued = isMessageQueued(key, messageId);
 
         return {
           ...message,
@@ -1092,6 +1136,7 @@ export function removeOptimisticMessage(
   provider?: BackendProvider,
 ) {
   const key = getMessagesKey(port, sessionId, provider);
+  clearMessageQueued(key, messageId);
 
   mutate(
     key,
