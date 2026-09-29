@@ -5,7 +5,8 @@
 #   1. build (vite + nitro) em apps/web
 #   2. copia .output para o pacote global (~/.bun/install/global/.../openportal/web)
 #   3. detecta TODAS as sessões term-cli/tmux que hospedam uma instância
-#   4. derruba todas as instâncias (UI, CLI pai, backends `opencode serve`)
+#   4. derruba as instâncias (UI, CLI pai, backends `opencode serve` das sessões
+#      detectadas; backends de terceiros não são tocados)
 #   5. reergue cada sessão detectada (C-c + `bunx openportal`)
 #   6. espera subir e valida o bundle servido em cada porta contra o build novo
 #
@@ -60,21 +61,61 @@ for s in "${ALL_SESSIONS[@]}"; do
   fi
 done
 
-# 4. derruba todas as instâncias
+# 4. captura os backends `opencode serve` antes de derrubar as UIs (o CLI pai
+#    é quem os spawna; depois de matá-lo a árvore de processos se perde)
+BACKEND_PIDS=()
+for s in "${HOSTING[@]}"; do
+  pane_pid=$(tmux display-message -p -t "$s" '#{pane_pid}' 2>/dev/null || true)
+  [[ -z "$pane_pid" ]] && continue
+  for d in $(descendants "$pane_pid"); do
+    cmd=$(tr '\0' ' ' <"/proc/$d/cmdline" 2>/dev/null || true)
+    case "$cmd" in
+      *opencode*serve*) BACKEND_PIDS+=("$d") ;;
+    esac
+  done
+done
+if [[ ${#BACKEND_PIDS[@]} -gt 0 ]]; then
+  mapfile -t BACKEND_PIDS < <(printf '%s\n' "${BACKEND_PIDS[@]}" | sort -u)
+fi
+
+# 4a. derruba UI e CLI pai
 pkill -9 -f "openportal/web/server/index.mjs" 2>/dev/null || true
 pkill -9 -f "\.bun/bin/openportal" 2>/dev/null || true
-pkill -9 -f "opencode serve" 2>/dev/null || true
 sleep 1
 
+# 4b. backends: TERM primeiro, KILL só se persistirem
+if [[ ${#BACKEND_PIDS[@]} -gt 0 ]]; then
+  kill -TERM "${BACKEND_PIDS[@]}" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    remaining=()
+    for pid in "${BACKEND_PIDS[@]}"; do
+      kill -0 "$pid" 2>/dev/null && remaining+=("$pid")
+    done
+    [[ ${#remaining[@]} -eq 0 ]] && break
+    sleep 1
+  done
+  if [[ ${#remaining[@]} -gt 0 ]]; then
+    kill -KILL "${remaining[@]}" 2>/dev/null || true
+  fi
+fi
+
 # 5. reergue cada sessão detectada (ou cria a padrão se nenhuma)
+CREATED_PORTAL=0
 if [[ ${#HOSTING[@]} -eq 0 ]]; then
   echo "Nenhuma sessão com instância encontrada; subindo 'portal'..."
-  tmux has-session -t portal 2>/dev/null || tmux new-session -d -s portal -x 120 -y 32
+  tmux has-session -t portal 2>/dev/null || {
+    tmux new-session -d -s portal -x 120 -y 32
+    CREATED_PORTAL=1
+  }
   HOSTING=(portal)
 fi
 for s in "${HOSTING[@]}"; do
-  tmux send-keys -t "$s" C-c 2>/dev/null || true
-  sleep 1
+  if [[ "$CREATED_PORTAL" == "1" ]]; then
+    sleep 1
+  else
+    tmux send-keys -t "$s" C-c 2>/dev/null || true
+    sleep 1
+  fi
   tmux send-keys -t "$s" "bunx openportal" Enter
   sleep 2
 done
