@@ -949,3 +949,41 @@ Limites: task pendente ainda sem metadata não exibe (irrelevante — permissão
 - `deploy.sh` ×3 ao vivo: `opencode serve --port 4099` fora do Portal sobreviveu aos 3 deploys; backend do Portal (`:4000`) foi capturado e respawnado (18460→18869→19089); sem o `pkill` global.
 - E2E no browser (390x844): `!ls` + Enter manteve `!ls ` (antes virava `! `); `/fork` via composer navegou para a child criada (`POST .../builtin` → 200 `{accepted, action, session}`); duas mensagens idênticas enfileiradas ("probe duplicado") com sessão ocupada — ambas visíveis, a 1ª processada (assistant "pronto") sem derrubar a 2ª.
 - Sessões de teste deletadas; servidor `:4099` e sessão tmux `probe` removidos.
+
+## 23. Permissão/live updates invisíveis em sessões de subdiretório (directory-scoped)
+
+### 23.1 Sintoma (relato do usuário)
+
+- "Ainda acontece problemas de permissão não aparecer": sessões abertas em subdiretório do projeto (ex.: `apps/web`, TUI ou criações com `directory`) aparecem na lista do Portal, mas pedidos de permissão nunca mostram Allow/Deny; status/streaming também ficam congelados.
+- Reproduzido: sessão `directory=/home/fallen33/portal/apps/web`; permissão pendente no backend, `/permissions` do Portal vazio.
+
+### 23.2 Medição (opencode 1.18.34, backend :4000)
+
+Os endpoints de instância são **escopados pelo directory exato** (não pelo projeto):
+
+| endpoint                                    | sem `directory` (default do proc = raiz do projeto)    | com `directory=apps/web` |
+| ------------------------------------------- | ------------------------------------------------------ | ------------------------ |
+| `GET /session`                              | projeto inteiro (subdirs incluídos)                    | só aquele directory      |
+| `GET /session/status`                       | só raiz (2 chaves)                                     | só subdir                |
+| `GET /permission`                           | só raiz                                                | só subdir                |
+| `GET /question`                             | só raiz                                                | só subdir                |
+| `GET /event`                                | só raiz (NENHUM evento do subdir)                      | só subdir                |
+| `POST /permission/{id}/reply` sem directory | `404 PermissionNotFoundError` para permissão de subdir | ok                       |
+
+- `GET /global/event` (1.18.34) entrega tudo com envelope `{directory, project, payload}`; raiz e subdir compartilham `project` id (`/project/current`).
+- `/session/{id}/...`, prompt, mensagens etc. são por sessão e funcionam sem directory.
+
+### 23.3 Fix (tudo no servidor do Portal; front intacto)
+
+1. **`apps/web/src/server/lib/opencode-directories.ts` (novo)** — `getOpencodeDirectories(port)` (lista de sessões → directors únicos, cache 5s), `getOpencodeProjectId(port)` (cache 30s) e `runWithOpencodeDirectories(port, run)` (tenta default → cada directory → refresh; usado nos replies).
+2. **`events.ts`** — assina `client.global.event()` e filtra por `project === projectId` (ou directory conhecido); sem a rota (backend antigo), cai no `client.event.subscribe` antigo.
+3. **`permissions.ts` / `questions.ts` / `session/status.ts`** — consultam cada directory conhecida e mesclam (dedupe por id / spread do mapa).
+4. **`permission/[requestId]/reply.ts` / `question/[requestId]/reply.ts` / `question/[requestId]/reject.ts`** — usam `runWithOpencodeDirectories` (o cliente só conhece o requestID, não o directory).
+5. Cache `directory` limpo por `clearOpencodeDirectoryCaches()` (exportado; sem chamador ainda).
+
+### 23.4 Verificação
+
+- `npx tsc --noEmit` → 3 erros pré-existentes; build ok.
+- Build novo validado numa porta separada (`:3100`, servindo `.output`) sem tocar no portal em uso: permissão de subdir aparece no card do bash, "Allow once" responde (fallback de directory) e some via SSE; permissão de subagente (child) na sessão raiz continua aparecendo no card da task; `permission.replied` (raiz) e 9 eventos de subdir chegaram pelo stream novo; nenhum evento do projeto `/tmp` vazou (filtro por project id); lista de sessões continua sem o projeto `/tmp`.
+- Deploy ao vivo: `:3000` passou a servir o build novo (troca só do web server, backend da sessão preservado) e evento `session.created` de sessão em `apps/web` chegou pelo proxy.
+- Sessões/arquivos de teste removidos.
