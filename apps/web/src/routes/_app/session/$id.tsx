@@ -58,11 +58,16 @@ import {
   type MessageWithParts,
   type Part,
   type ToolPart,
+  type ReasoningPart,
   type PermissionRequest,
   type QuestionAnswer,
   type QuestionInfo,
   type QuestionRequest,
 } from "@/hooks/use-session-messages";
+import {
+  useThinkingMode,
+  type ThinkingMode,
+} from "@/hooks/use-thinking-mode";
 import {
   useAgents,
   usePermissions,
@@ -593,6 +598,14 @@ function getMessageContent(parts: Part[]): string {
     )
     .map((part) => part.text)
     .join("\n\n");
+}
+
+function isReasoningPart(part: Part): part is ReasoningPart {
+  return part.type === "reasoning";
+}
+
+function reasoningText(part: ReasoningPart): string {
+  return part.text.replace(/\[REDACTED\]/g, "").trim();
 }
 
 function getAssistantError(message: MessageWithParts) {
@@ -1155,11 +1168,66 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
   return <Markdown remarkPlugins={markdownPlugins}>{content}</Markdown>;
 });
 
+const ReasoningBlock = memo(function ReasoningBlock({
+  part,
+  mode,
+}: {
+  part: ReasoningPart;
+  mode: ThinkingMode;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const content = reasoningText(part);
+  if (!content) return null;
+  const done = part.time.end !== undefined;
+  const open = mode === "show" || expanded;
+
+  return (
+    <div
+      data-reasoning-block
+      className="mb-2 overflow-hidden rounded-md border border-border bg-muted/25"
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        disabled={mode === "show"}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs text-muted-fg"
+      >
+        {!done && (
+          <Ripples size="16" speed="2" color="var(--color-primary)" />
+        )}
+        <span className={done ? "" : "animate-pulse"}>
+          {done ? "Thought" : "Thinking..."}
+        </span>
+        {mode === "hide" && (
+          <ChevronDownIcon
+            size="12px"
+            className={`ml-auto shrink-0 transition-transform ${
+              open ? "rotate-180" : ""
+            }`}
+          />
+        )}
+      </button>
+      {open && (
+        <div
+          data-reasoning-body
+          className="border-t border-border/60 px-2.5 py-2"
+        >
+          <div className="prose prose-sm dark:prose-invert max-w-none opacity-75">
+            <MemoizedMarkdown content={content} />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
 const MessageItem = memo(function MessageItem({
   message,
   port,
   provider,
   sessionId,
+  thinkingMode,
   pendingPermissions,
   pendingQuestions,
   onPermissionResolved,
@@ -1172,6 +1240,7 @@ const MessageItem = memo(function MessageItem({
   port: number;
   provider?: BackendProvider;
   sessionId: string;
+  thinkingMode: ThinkingMode;
   pendingPermissions: PermissionRequest[];
   pendingQuestions: QuestionRequest[];
   onPermissionResolved: (requestId: string) => void;
@@ -1181,13 +1250,20 @@ const MessageItem = memo(function MessageItem({
   pendingTaskPermissions: PermissionRequest[];
 }) {
   const textContent = getMessageContent(message.parts);
+  const reasoningParts = message.parts
+    .filter(isReasoningPart)
+    .filter((part) => reasoningText(part));
   const isAssistant = message.info.role === "assistant";
   const messageError = isAssistant ? getAssistantError(message) : null;
   const toolCalls = message.parts.filter(isToolPart);
   const messagePermissions = pendingPermissions.filter(
     (perm) => perm.tool?.messageID === message.info.id,
   );
-  const hasMainContent = !!(textContent || messageError);
+  const hasMainContent = !!(
+    textContent ||
+    messageError ||
+    reasoningParts.length > 0
+  );
 
   return (
     <>
@@ -1205,6 +1281,13 @@ const MessageItem = memo(function MessageItem({
                   Queued
                 </Badge>
               )}
+              {reasoningParts.map((part) => (
+                <ReasoningBlock
+                  key={part.id}
+                  part={part}
+                  mode={thinkingMode}
+                />
+              ))}
               <div
                 className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
               >
@@ -1273,9 +1356,12 @@ const MessageItem = memo(function MessageItem({
 function hasVisibleContent(message: MessageWithParts): boolean {
   const textContent = getMessageContent(message.parts);
   const hasToolCalls = message.parts.some(isToolPart);
+  const hasReasoning = message.parts.some(
+    (part) => isReasoningPart(part) && reasoningText(part).length > 0,
+  );
   const messageError =
     message.info.role === "assistant" ? getAssistantError(message) : null;
-  return !!(textContent || hasToolCalls || messageError);
+  return !!(textContent || hasToolCalls || messageError || hasReasoning);
 }
 
 const SessionComposer = memo(function SessionComposer({
@@ -1771,6 +1857,7 @@ function SessionPage() {
   const isNearBottomRef = useRef(true);
   const prevMessagesLengthRef = useRef(0);
   const { commands } = useCommands(currentSession?.directory);
+  const { thinkingMode, toggleThinkingMode } = useThinkingMode();
 
   const messagesLoadError = messagesError?.message;
 
@@ -2092,6 +2179,7 @@ function SessionPage() {
       port,
       provider,
       sessionId,
+      thinkingMode,
       pendingPermissions,
       pendingQuestions,
       optimisticMessageIDs,
@@ -2104,6 +2192,7 @@ function SessionPage() {
       port,
       provider,
       sessionId,
+      thinkingMode,
       pendingPermissions,
       pendingQuestions,
       optimisticMessageIDs,
@@ -2141,6 +2230,7 @@ function SessionPage() {
         port={sharedListProps.port}
         provider={sharedListProps.provider}
         sessionId={sharedListProps.sessionId}
+        thinkingMode={sharedListProps.thinkingMode}
         pendingPermissions={sharedListProps.pendingPermissions}
         pendingQuestions={sharedListProps.pendingQuestions}
         onPermissionResolved={sharedListProps.onPermissionResolved}
@@ -2194,6 +2284,13 @@ function SessionPage() {
 
     if (firstWord === "/mcps" || firstWord === "/status") {
       setDialog(firstWord.slice(1) as "mcps" | "status");
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (firstWord === "/thinking") {
+      toggleThinkingMode();
       submitLockRef.current = false;
       setIsSubmitting(false);
       return;
@@ -2310,6 +2407,7 @@ function SessionPage() {
       runBuiltinAction,
       sendMessage,
       scrollToBottom,
+      toggleThinkingMode,
     ],
   );
 

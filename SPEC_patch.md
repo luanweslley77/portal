@@ -987,3 +987,46 @@ Os endpoints de instância são **escopados pelo directory exato** (não pelo pr
 - Build novo validado numa porta separada (`:3100`, servindo `.output`) sem tocar no portal em uso: permissão de subdir aparece no card do bash, "Allow once" responde (fallback de directory) e some via SSE; permissão de subagente (child) na sessão raiz continua aparecendo no card da task; `permission.replied` (raiz) e 9 eventos de subdir chegaram pelo stream novo; nenhum evento do projeto `/tmp` vazou (filtro por project id); lista de sessões continua sem o projeto `/tmp`.
 - Deploy ao vivo: `:3000` passou a servir o build novo (troca só do web server, backend da sessão preservado) e evento `session.created` de sessão em `apps/web` chegou pelo proxy.
 - Sessões/arquivos de teste removidos.
+
+## 24. Comando `/thinking` (paridade com o TUI: expandir/recolher blocos de raciocínio)
+
+### 24.1 Objetivo
+
+Disponibilizar no Portal o `/thinking` do TUI. No TUI (`packages/tui/src/context/thinking.ts`) o comando **não** liga/desliga o raciocínio do modelo — ele cicla a exibição `show → hide` (`thinking_mode`, default `hide`; legado `thinking_visibility` migrado). Em `hide` o bloco aparece como uma linha recolhida e clicável; em `show` o markdown completo fica sempre visível. No Portal os blocos de reasoning **não eram renderizados** (só o indicador "Thinking..." global), então o comando sozinho não teria efeito.
+
+### 24.2 Semântica adotada
+
+- `hide` (default): cabeçalho de uma linha com `+`/seta, rótulo `Thought` (concluído) ou `Thinking...` pulsando com spinner (ainda em stream); clique alterna o corpo daquele bloco.
+- `show`: corpo markdown sempre aberto; cabeçalho não interativo.
+- Preferência persistida em `localStorage` (`portal-thinking-mode`); `/thinking` faz o ciclo. `[REDACTED]` (reasoning criptografado) é removido; bloco sem texto não renderiza (mesmo critério do TUI: `Show when content() || opaque()`).
+
+### 24.3 Implementação
+
+1. **`apps/web/src/hooks/use-thinking-mode.ts` (novo)** — `ThinkingMode = "show" | "hide"`, `readThinkingMode` (default `hide`), `nextThinkingMode`, `useThinkingMode()` (`thinkingMode`, `setThinkingMode`, `toggleThinkingMode`).
+2. **`apps/web/src/hooks/use-commands.ts`** — `{ name: "thinking", description: "Toggle thinking visibility" }` em `BUILTIN_COMMANDS` (aparece no popover `/`; busca também pela descrição).
+3. **`$id.tsx`** — `submitComposerMessage` trata `/thinking` localmente (como `/mcps`/`/status`), sem chamar o backend; `sharedListProps` carrega `thinkingMode` (mudar o modo re-renderiza os itens, necessário); `MessageItem` renderiza `ReasoningBlock` (memo) antes do texto, dentro da mesma seção do assistant; `hasVisibleContent` passa a considerar reasoning com texto.
+
+### 24.4 Dados: preservar tempo do reasoning
+
+O rótulo depende de `part.time.end` (TUI idem). Toda a conversão descartava tempo/metadados:
+
+- **`use-session-messages.ts`** — novo tipo `SessionReasoningContent` (+`time?`, `metadata?`) e helper `reasoningContent()`; `legacyAssistantContent` preserva `part.time`/`part.metadata`; `reasoningPart()` usa `time.start/end` do item, caindo para `message.time.created/completed` só quando ausente (compatível com o formato v2 do servidor, que não tem `time` por item).
+- **`use-opencode-events.ts`** — `message.part.updated` de reasoning preserva `time`/`metadata`; `session.next.reasoning.started` grava `time.start = timestamp`; `.ended` grava `time.end = timestamp` mantendo o `start`.
+
+### 24.5 Medição (SSE real, opencode 1.18.34)
+
+Captura do stream (`message.part.updated`) durante um turno real: o part de reasoning é emitido **vazio e sem `end`** no início (4,1s) e **completo com `end`** só no fim (50,8s) — 25k chars de uma vez; não há `message.part.delta`/`session.next.reasoning.*` para esse provider. Logo, com os providers configurados, o bloco real passa direto de invisível a `Thought`; `Thinking...` só apareceria com deltas (nenhum provider com crédito no ambiente; OpenRouter retornou 402). O estado de streaming foi então validado por interceptação CDP de `GET .../messages` com payload legacy realista (reasoning com texto e **sem** `time.end`), mantendo gesto real.
+
+### 24.6 Verificação
+
+- `npx tsc --noEmit` → mesmos 3 erros pré-existentes; build ok.
+- Build novo em porta separada (`:3999`, `.output/server`) com Chrome headless próprio via CDP (o MCP do chrome-devtools não abria browser nesta sessão por falta de X server).
+- **Mobile 390x844, sessão real (`ses_f315eeb6...`, 48 blocos)**: default `hide` → 48 cabeçalhos `Thought` recolhidos (`aria-expanded=false`, 0 corpos); popover lista `/thinking`; `/thinking` + enviar → `localStorage=show`, 48/48 corpos visíveis com o texto do 1º reasoning, composer limpo; clique no cabeçalho em `show` não fecha; 2º `/thinking` → `hide`, 48 recolhidos; clique expande só aquele bloco (`bodies=1`), clique de novo recolhe. Screenshot `thinking-mobile.png`.
+- **Streaming (interceptado)**: rótulo `Thinking...`, `animate-pulse`, spinner presente + chevron, recolhido; clique expande o corpo em stream.
+- **Live real**: sessão nova com `commandcode/deepseek-v4.1-flash` (variant max) — bloco termina como `Thought`, recolhido no modo `hide`, corpo com texto ao expandir.
+- **Desktop 1280x800**: Enter no popover completa `/thinking` e o 2º Enter envia; modo/visibilidade aplicam; 48/48 corpos; sem overflow horizontal.
+- Sessões de teste (`ses_f006...`, `ses_f005...`) removidas via API.
+
+### 24.7 Deploy
+
+`~/.portal.json` `webPid` é atualizado depois de trocar só o web server (backend da sessão preservado), como na §23.

@@ -30,6 +30,7 @@ export type {
   ToolPart,
   ToolState,
   TextPart,
+  ReasoningPart,
   PermissionRequest,
   QuestionAnswer,
   QuestionInfo,
@@ -48,6 +49,29 @@ type LegacyAssistantMessage = Extract<Message, { role: "assistant" }>;
 type LegacyUserMessage = Extract<Message, { role: "user" }>;
 type ToolContent = ToolTextContent | ToolFileContent;
 type AssistantError = NonNullable<SessionMessageAssistant["error"]>;
+
+export type SessionReasoningContent = Extract<
+  SessionMessageAssistant["content"][number],
+  { type: "reasoning" }
+> & {
+  time?: { start?: number; end?: number };
+  metadata?: Record<string, unknown>;
+};
+
+function reasoningContent(
+  id: string,
+  text: string,
+  time?: { start?: number; end?: number },
+  metadata?: Record<string, unknown>,
+): SessionMessageAssistant["content"][number] {
+  return {
+    type: "reasoning",
+    id,
+    text,
+    ...(time ? { time } : {}),
+    ...(metadata ? { metadata } : {}),
+  } as SessionMessageAssistant["content"][number];
+}
 
 const EMPTY_TOKENS = {
   total: 0,
@@ -539,7 +563,14 @@ function legacyAssistantContent(
     }
 
     if (part.type === "reasoning") {
-      content.push({ type: "reasoning", id: part.id, text: part.text });
+      content.push(
+        reasoningContent(
+          part.id,
+          part.text,
+          part.time,
+          part.metadata as Record<string, unknown> | undefined,
+        ),
+      );
       return;
     }
 
@@ -761,6 +792,9 @@ function reasoningPart(
   sessionId: string,
   message: SessionMessageAssistant,
 ): ReasoningPart {
+  const stored = item as SessionReasoningContent;
+  const start = stored.time?.start ?? message.time.created;
+  const end = stored.time?.end ?? message.time.completed;
   return {
     id: item.id,
     sessionID: sessionId,
@@ -768,9 +802,10 @@ function reasoningPart(
     type: "reasoning",
     text: item.text,
     time: {
-      start: message.time.created,
-      ...(message.time.completed ? { end: message.time.completed } : {}),
+      start,
+      ...(end !== undefined ? { end } : {}),
     },
+    ...(stored.metadata ? { metadata: stored.metadata } : {}),
   };
 }
 

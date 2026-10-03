@@ -23,6 +23,7 @@ import {
   recordCompletedMessage,
   removeOptimisticUserMessages,
   sortSessionMessages,
+  type SessionReasoningContent,
 } from "@/hooks/use-session-messages";
 import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
 
@@ -365,11 +366,20 @@ function applyMessagePartUpdated(
     const existingIdx = assistant.content.findIndex(
       (c) => c.type === "reasoning" && (c as SessionMessageAssistantReasoning).id === reasoningPart.id,
     );
-    const sessionReasoning: SessionMessageAssistantReasoning = {
+    const sessionReasoning = {
       type: "reasoning",
       id: reasoningPart.id,
       text: reasoningPart.text,
-    };
+      time: {
+        start: reasoningPart.time.start,
+        ...(reasoningPart.time.end !== undefined
+          ? { end: reasoningPart.time.end }
+          : {}),
+      },
+      ...(reasoningPart.metadata
+        ? { metadata: reasoningPart.metadata }
+        : {}),
+    } as SessionReasoningContent;
     let newContent: SessionMessageAssistant["content"];
     if (existingIdx >= 0) {
       newContent = [...assistant.content];
@@ -972,7 +982,10 @@ function applyEvent(
             type: "reasoning",
             id: event.properties.reasoningID,
             text: "",
-          },
+            time: {
+              start: event.properties.timestamp,
+            },
+          } as SessionReasoningContent,
         ),
       );
       break;
@@ -1022,7 +1035,13 @@ function applyEvent(
             content[reasoningIndex] = {
               ...reasoning,
               text: event.properties.text,
-            } satisfies SessionMessageAssistantReasoning;
+              time: {
+                start:
+                  (reasoning as SessionReasoningContent).time?.start ??
+                  event.properties.timestamp,
+                end: event.properties.timestamp,
+              },
+            } as SessionReasoningContent;
             return { ...assistant, content };
           },
         ),
