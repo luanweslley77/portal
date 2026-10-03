@@ -1031,3 +1031,32 @@ Captura do stream (`message.part.updated`) durante um turno real: o part de reas
 ### 24.7 Deploy
 
 `~/.portal.json` `webPid` é atualizado depois de trocar só o web server (backend da sessão preservado), como na §23.
+
+## 25. Seleção de texto vazava para o chrome (Tasks/Git em cima, selects/textarea embaixo) e virava "selecionar tudo"
+
+### 25.1 Sintoma (feedback do usuário)
+
+Ao arrastar a seleção de texto na sessão:
+
+1. O arrasto para cima alcançava os botões `TASKS`/`GIT` (barra superior) e o texto deles entrava na seleção; em vez de a seleção crescer conforme a rolagem automática subia, o trecho inteiro acima do dedo era selecionado de uma vez ("seleciona todo o texto").
+2. Embaixo, o arrasto alcançava os selects de agente/modelo e o texto visível com a caixa vazia (placeholder) — o mesmo efeito, com texto do composer entrando na seleção.
+
+### 25.2 Causa (medida antes de editar, CDP)
+
+A barra superior e o composer são **irmãos** do scroller do chat no fluxo (não sobrepostos): o Chat ocupa só a área entre `nav.bottom` (61) e `composer.top` (732). O hit-test da extensão da seleção usa `pointer-events`/`user-select`:
+
+- `TASKS`/`GIT` e os selects tinham `user-select: auto` → o endpoint da seleção "grudava" no texto do chrome (medido: `anchorNode = "Tasks"`, `anchor = "build"` no select).
+- Como o chrome fica **antes/depois** do conteúdo na ordem do documento, o endpoint grudado nele faz a seleção abranger tudo entre o ponto inicial e ele — daí o "seleciona tudo" (baseline medido: 28.5k chars já na 1ª amostra, sem crescer com a rolagem).
+- Para o arrasto em cima ser **progressivo**, o ponto do dedo (fora da caixa do scroller) precisa cair dentro do scroller: com o scroller estendido sob a barra e o hit-test passando por ela, o endpoint acompanha o texto que entra pela borda durante a rolagem (medido em protótipo injetado: 846 → 2.818 chars crescendo com o `scrollTop`).
+
+### 25.3 Fix
+
+1. **`app-sidebar-nav.tsx`** — a `SidebarNav` ganhou `relative select-none pointer-events-none bg-inherit` + `[&_a]`/`[&_button]:pointer-events-auto`: os controles continuam clicáveis, mas o hit-test da seleção atravessa a barra (o texto dela não é selecionável). `bg-inherit` mantém a barra opaca com a cor exata do `SidebarInset` (claro/escuro) agora que o conteúdo rola por baixo. Um `ResizeObserver` publica a altura real em `--app-nav-height` (60px mobile, 52px desktop).
+2. **`session/$id.tsx`** — o root da página virou `absolute inset-0` relativo ao `main[data-slot=sidebar-inset]` (que já é `relative`): o scroller do chat passa a cobrir também a área da barra; `pt-[var(--app-nav-height,3.75rem)]` reposiciona o conteúdo (1ª linha em `top=61 == nav.bottom`, medido). O composer segue no fluxo reservando o próprio espaço (chat bottom == composer top).
+3. **Composer** — `select-none` no container (selects, anexos, erros) e `select-text` explícito no `<textarea>`, para o texto digitado continuar selecionável.
+
+### 25.4 Verificação (build novo em `:3000`, CDP com gesto real de arrasto)
+
+- **Mobile 390x844**: `.opencode` … `nav` `position:relative`, `z-40`, `user-select:none`, `pointer-events:none`, `bg == inset` (claro e escuro); scroller `top=1`, `padding-top=60px`; `elementFromPoint` no meio da barra → parágrafo da mensagem (pass-through); `TASKS`/`GIT` seguem no hit-test dos botões e os sheets abrem. Arrasto para cima: seleção cresce com a rolagem (783 → 2.138 chars), sem `TASKS`/`GIT`, sem placeholder e endpoint fora do composer. Arrastos para baixo (textarea e selects): seleção limpa, endpoint no conteúdo do chat.
+- **Desktop 1280x800**: idem (altura 52px, seleção 837 → 3.573 chars); `nav hit points` = botões nas pontas e conteúdo da mensagem no vão; breadcrumbs clicáveis; settings/diff inalterados (`nav` em fluxo, sem conteúdo por baixo).
+- **Sem regressão de UX**: digitar e arrastar dentro do textarea ainda seleciona (`user-select:text`; 0–17 chars selecionados), popover `/` abre ancorado acima do composer, sidebar e sheets abrem, sem overflow horizontal, última mensagem visível acima do composer.

@@ -1498,7 +1498,7 @@ const SessionComposer = memo(function SessionComposer({
   };
 
   return (
-    <div className="border-t border-border p-3 pb-1 shrink-0 relative">
+    <div className="border-t border-border p-3 pb-1 shrink-0 relative select-none">
       <FileMentionPopover
         isOpen={fileMention.isOpen}
         searchQuery={fileMention.searchQuery}
@@ -1667,7 +1667,7 @@ const SessionComposer = memo(function SessionComposer({
               }}
               onBlur={() => slashCommand.close()}
               placeholder="Type a message... (use @ for files)"
-              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
+              className={`w-full min-w-0 resize-none border-0! rounded-none! bg-transparent! focus:ring-0! select-text ${wrapped ? "min-h-12 py-2" : "min-h-11 pt-3 pb-1 pl-11! pr-13!"}`}
               rows={5}
             />
           </div>
@@ -2533,11 +2533,11 @@ function SessionPage() {
 
   return (
     <div
-      className="-m-4 flex h-[calc(100%+2rem)] flex-col"
+      className="absolute inset-0 flex flex-col"
       style={keyboardOffset > 0 ? { paddingBottom: keyboardOffset } : undefined}
     >
       <div
-        className="flex-1 overflow-auto overflow-x-hidden"
+        className="flex-1 overflow-auto overflow-x-hidden pt-[var(--app-nav-height,3.75rem)]"
         ref={chatContainerRef}
       >
         {loading && (

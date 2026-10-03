@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
 import { Breadcrumbs, BreadcrumbsItem } from "@/components/ui/breadcrumbs";
 import { Button } from "@/components/ui/button";
@@ -180,6 +180,7 @@ export function AppSidebarNav() {
   const selectedModel = useModelStore((s) => s.selectedModel);
   const { mutate: mutateSessions } = useSessions();
 
+  const navRef = useRef<HTMLElement>(null);
   const [isCreatingPR, setIsCreatingPR] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
@@ -285,8 +286,33 @@ export function AppSidebarNav() {
 
   const isLoading = isCreatingPR || isPulling || isPushing;
 
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return;
+
+    const syncHeight = () => {
+      document.documentElement.style.setProperty(
+        "--app-nav-height",
+        `${nav.getBoundingClientRect().height}px`,
+      );
+    };
+
+    syncHeight();
+    const observer = new ResizeObserver(syncHeight);
+    observer.observe(nav);
+
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--app-nav-height");
+    };
+  }, []);
+
   return (
-    <SidebarNav isSticky>
+    <SidebarNav
+      isSticky
+      ref={navRef}
+      className="relative select-none pointer-events-none bg-inherit [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+    >
       <span className="flex items-center gap-x-4">
         <SidebarTrigger className="-ml-2" />
         <Breadcrumbs className="hidden md:flex">
