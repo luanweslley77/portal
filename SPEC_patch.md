@@ -1060,3 +1060,38 @@ A barra superior e o composer são **irmãos** do scroller do chat no fluxo (nã
 - **Mobile 390x844**: `.opencode` … `nav` `position:relative`, `z-40`, `user-select:none`, `pointer-events:none`, `bg == inset` (claro e escuro); scroller `top=1`, `padding-top=60px`; `elementFromPoint` no meio da barra → parágrafo da mensagem (pass-through); `TASKS`/`GIT` seguem no hit-test dos botões e os sheets abrem. Arrasto para cima: seleção cresce com a rolagem (783 → 2.138 chars), sem `TASKS`/`GIT`, sem placeholder e endpoint fora do composer. Arrastos para baixo (textarea e selects): seleção limpa, endpoint no conteúdo do chat.
 - **Desktop 1280x800**: idem (altura 52px, seleção 837 → 3.573 chars); `nav hit points` = botões nas pontas e conteúdo da mensagem no vão; breadcrumbs clicáveis; settings/diff inalterados (`nav` em fluxo, sem conteúdo por baixo).
 - **Sem regressão de UX**: digitar e arrastar dentro do textarea ainda seleciona (`user-select:text`; 0–17 chars selecionados), popover `/` abre ancorado acima do composer, sidebar e sheets abrem, sem overflow horizontal, última mensagem visível acima do composer.
+
+## 26. Entrar em sessão demorava "demasiadamente": payload de mensagens sem compressão
+
+### 26.1 Sintoma (feedback do usuário)
+
+Abrir uma sessão no portal demorava muito para carregar (spinner por vários segundos), pior nas sessões longas. Em rede móvel, a espera chegava a dezenas de segundos.
+
+### 26.2 Causa (medida antes de editar, CDP + curl)
+
+`GET /api/{provider}/{port}/session/{id}/messages` devolve o histórico completo (mensagens + todas as parts, incluindo `state.output` de tools e reasoning) **sem compressão**. Medições reais:
+
+- Sessão `ses_f123dbe8...` (344 mensagens, 1.447 parts, 408 tools): **2.709.405 bytes** (2,7 MB) de JSON; outra com 327 msgs: 2,67 MB. O `Content-Encoding` nunca era enviado, mesmo o browser mandando `Accept-Encoding: gzip, deflate, br, zstd`.
+- Harness Puppeteer (390×844, CPU 4×, rede 1,6 Mbps/150 ms = "Fast 3G"): clique na sessão → primeiro card em **18,8 s**, spinner visível **17,2 s**. O tempo era dominado pela transferência (o trabalho de CPU pós-fetch ficou em ~0,8 s de long tasks). Sem throttle: 1,19 s.
+- O endpoint em si é rápido no servidor (17–190 ms): o gargalo é o volume trafegado, não a geração.
+
+### 26.3 Fix
+
+**`apps/web/middleware/compress.ts`** (novo, middleware global do Nitro — primeira vez que o projeto usa `middleware/`, que o `serverDir: "."` já varre):
+
+- `onResponse` do h3 v2 (hook que **substitui** a Response; `toResponse`/`onResponse` do `nitro/h3`).
+- Escopo: só `/api/` (assets/HTML estáticos são servidos antes do middleware e não passam por ele).
+- Pula: `HEAD`, 204/206/304, corpo inexistente, `Content-Encoding` já presente, `Cache-Control: no-transform` (inclusive SSE `text/event-stream`).
+- Só tipos compressíveis (JSON/JS/XML/texto) e corpo ≥ 1 KB (checa `Content-Length` antes de ler; se o header não existe, lê e, se vier < 1 KB, **reemite o corpo bufferizado** — devolver a Response original depois de `arrayBuffer()` serve corpo vazio).
+- Brotli com qualidade 5 (≈40 ms para 2,7 MB, 442 KB) e fallback gzip nível 6 (588 KB). Preferência via `Accept-Encoding` com parsing de `q=`.
+- Ajusta `Content-Length` e adiciona `Vary: Accept-Encoding`; remove `ETag` (muda a representação).
+
+### 26.4 Verificação (build novo em `:3000`, curl + harness CDP)
+
+- `curl -H 'Accept-Encoding: gzip, deflate, br, zstd'`: `Content-Encoding: br`, `Vary: accept-encoding`, **2.709.405 → 442.595 bytes** (gzip: 588.030). `/config` 13,4 KB → 1,7 KB. Resposta pequena (`/instances`, 450 B) segue sem compressão e com corpo íntegro; SSE continua `text/event-stream` sem `Content-Encoding` (streaming normal).
+- Fast 3G + CPU 4×, sessão de 2,7 MB: clique → primeiro card **18,8 s → 5,1 s**; spinner **17,2 s → 3,5 s**. Outra sessão pesada (2,4 MB): 4,7 s. Desktop sem throttle: **422 ms** (era 1,19 s). 407 cards / 269 blocos de reasoning / composer presentes, **zero erros de console**.
+- Custo no servidor: +14 ms para comprimir 2,7 MB (brotli q5); o meio-termo escolhido evita o q11 (2,7 s de CPU) e o gzip mantém compatibilidade.
+
+### 26.5 Achado adjacente (não corrigido nesta seção)
+
+`/api/instances` leva **~4,5 s fixos** em ambas as portas — pré-existente. `discoverBackendServers()` roda `lsof` e sonda **todas** as portas em escuta; para portas que não são OpenCode, o probe Codex acumula 3 timeouts de 500 ms (`/readyz` + `/healthz` + handshake WS) por host, até 4,5 s. Como o SWR da tela de instâncias refaz a chamada a cada 5 s, é um custo recorrente. Fica registrado para avaliação (cache curto do discovery e/ou paralelizar/filtrar os probes).
