@@ -1095,3 +1095,31 @@ Abrir uma sessão no portal demorava muito para carregar (spinner por vários se
 ### 26.5 Achado adjacente (não corrigido nesta seção)
 
 `/api/instances` leva **~4,5 s fixos** em ambas as portas — pré-existente. `discoverBackendServers()` roda `lsof` e sonda **todas** as portas em escuta; para portas que não são OpenCode, o probe Codex acumula 3 timeouts de 500 ms (`/readyz` + `/healthz` + handshake WS) por host, até 4,5 s. Como o SWR da tela de instâncias refaz a chamada a cada 5 s, é um custo recorrente. Fica registrado para avaliação (cache curto do discovery e/ou paralelizar/filtrar os probes).
+
+## 27. Tabelas markdown quebradas: code inline longo não quebrava linha
+
+### 27.1 Sintoma (feedback do usuário)
+
+Tabelas renderizavam com colunas desalinhadas/sobrepostas quando alguma célula tinha conteúdo entre backticks (`code` inline) longo — ex.: um path sem espaços. A célula não quebrava a linha; o texto vazava por cima das colunas vizinhas e era cortado pelo `overflow-x-hidden` do `.prose`.
+
+### 27.2 Causa (medida antes de editar, CDP em sessão real)
+
+O CSS de tabela do `main.css` força colunas de largura igual (`thead`/`tbody` viram tabelas separadas com `display: table; width: 100%; table-layout: fixed`) — o que é necessário porque `table { display: block }` (para o scroll horizontal) quebraria o alinhamento entre grupos. Só que nenhuma regra define `overflow-wrap`; o default `normal` não quebra tokens sem espaço. Medições (sessão `ses_fb9b16a7...`, mobile 390×844, `.prose` = 316 px):
+
+- Tabela: `clientWidth` 316, `scrollWidth` **691**; célula do path: `clientWidth` **104**, `scrollWidth` **480**.
+- `<code>` do path com `getBoundingClientRect().right = 635` num viewport de 390 — 270 px além da borda da tabela (365), sobrepondo as colunas seguintes e sendo clipado.
+- `white-space` das células é `normal` (já havia override), então o problema era só a ausência de quebra em tokens sem espaço.
+
+### 27.3 Fix (`apps/web/src/main.css`)
+
+- `.prose { overflow-wrap: anywhere; }` — herdado por `th`/`td`/`code`/parágrafos; quebra paths, URLs e cadeias de método dentro da célula. `overflow-wrap` é propriedade herdada, então uma regra cobre tabela e texto normal.
+- Removido o `white-space: nowrap` de `.prose table` (inerte, pois `th`/`td` já usam `normal`; ficava contradizendo o comportamento pretendido).
+- **Não** afeta `<pre>`: `white-space: pre` impede a quebra; code blocks seguem com scroll horizontal próprio.
+
+### 27.4 Verificação (build novo em `:3399`, CDP com sessão real + casos sintéticos)
+
+- **Mobile 390×844** (tabela real de 3 colunas, 43 rects de `code`): tabela `clientWidth == scrollWidth == 316`; **0** células com overflow; **0** codes fora da célula; `overflowBeyondProse` 0.
+- **Casos de borda injetados no DOM real** (mesma estrutura GFM): 6 colunas com code nos headers e tokens sem espaço, e parágrafo com path gigante — todos com 0 overflow horizontal e 0 clipping vertical.
+- **320×700**: tabela 246 px, 0 overflow; parágrafo com code longo quebra em 5 linhas (`right` 294 ≤ 295 do `.prose`); `<pre>` mantém scroll (`clientWidth` 246, `scrollWidth` 862) — sem regressão.
+- **Desktop 1280×800**: idem, 0 overflow.
+- `npx tsc --noEmit` sem novos erros (só os 3 pré-existentes).
