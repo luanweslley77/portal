@@ -13,7 +13,17 @@ const recentPromptRequests = new Map<string, number>();
 
 const promptBodySchema = z.object({
   messageID: z.string().optional(),
-  text: z.string().min(1),
+  text: z.string().min(1).optional(),
+  parts: z
+    .array(
+      z.object({
+        type: z.literal("file"),
+        mime: z.string(),
+        filename: z.string().optional(),
+        url: z.string(),
+      }),
+    )
+    .optional(),
   model: z
     .object({
       providerID: z.string(),
@@ -64,10 +74,16 @@ export default defineHandler(async (event) => {
 
   const client = getOpencodeClient(port);
   try {
+    const textParts = body.text
+      ? [{ type: "text" as const, text: body.text }]
+      : [];
+    if (textParts.length === 0 && !body.parts?.length) {
+      throw new HTTPError("Message is empty", { status: 400 });
+    }
     const promptInput = {
       sessionID: id,
       messageID: body.messageID,
-      parts: [{ type: "text" as const, text: body.text }],
+      parts: [...(body.parts ?? []), ...textParts],
       model: body.model
         ? {
             providerID: body.model.providerID,

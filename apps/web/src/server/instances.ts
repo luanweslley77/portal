@@ -224,6 +224,17 @@ function formatUrlHost(host: string): string {
   return host.includes(":") ? `[${host}]` : host;
 }
 
+function getAuthHeaders(): Record<string, string> | undefined {
+  const username = process.env.OPENCODE_SERVER_USERNAME;
+  const password = process.env.OPENCODE_SERVER_PASSWORD;
+  if (username && password) {
+    return {
+      Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+    };
+  }
+  return undefined;
+}
+
 async function fetchJson<T>(
   url: string,
   options: { headers?: HeadersInit; timeoutMs?: number } = {},
@@ -239,6 +250,7 @@ async function fetchJson<T>(
       headers: {
         Accept: "application/json",
         ...options.headers,
+        ...getAuthHeaders(),
       },
       signal: controller.signal,
     });
@@ -386,9 +398,23 @@ async function fetchSessionStats(
 
   if (!sessions) return null;
 
-  const hasMore = sessions.length > SESSION_STATS_DISPLAY_LIMIT;
-  const count = hasMore ? SESSION_STATS_DISPLAY_LIMIT : sessions.length;
-  const lastUpdated = sessions[0] ? getSessionUpdatedAt(sessions[0]) : null;
+  const mainSessions = sessions.filter(
+    (session) =>
+      !(
+        session &&
+        typeof session === "object" &&
+        "parentID" in session &&
+        (session as { parentID?: string }).parentID
+      ),
+  );
+
+  const hasMore = mainSessions.length > SESSION_STATS_DISPLAY_LIMIT;
+  const count = hasMore
+    ? SESSION_STATS_DISPLAY_LIMIT
+    : mainSessions.length;
+  const lastUpdated = mainSessions[0]
+    ? getSessionUpdatedAt(mainSessions[0])
+    : null;
 
   return {
     count,
@@ -629,9 +655,10 @@ export default defineHandler(async () => {
       version: "claude sdk",
       sessionStats: null,
       state: "running" as const,
-      status: webRunning && instance.startedAt
-        ? `Managed by OpenPortal since ${new Date(instance.startedAt).toLocaleString()}`
-        : "Registered by openportal run",
+      status:
+        webRunning && instance.startedAt
+          ? `Managed by OpenPortal since ${new Date(instance.startedAt).toLocaleString()}`
+          : "Registered by openportal run",
     };
   });
 

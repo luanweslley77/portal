@@ -13,6 +13,8 @@ import {
   FileDiff,
   FileText,
   Folder,
+  FolderInput,
+  GitBranch,
   GitPullRequest,
   Globe,
   GripVertical,
@@ -21,6 +23,8 @@ import {
   Info,
   KeyRound,
   LifeBuoy,
+  ListPlus,
+  ListTree,
   LogOut,
   MessageCircle,
   MessageSquare,
@@ -30,6 +34,7 @@ import {
   Box,
   PanelLeft,
   Palette,
+  Paperclip,
   PenLine,
   Plus,
   RefreshCw,
@@ -42,6 +47,7 @@ import {
   Sparkles,
   Sun,
   Trash2,
+  Undo2,
   User,
   X,
 } from "lucide-react";
@@ -80,21 +86,26 @@ export const CpuChipIcon = createAppIcon(Cpu);
 export const DocumentIcon = createAppIcon(FileText);
 export const EllipsisHorizontalIcon = createAppIcon(Ellipsis);
 export const FolderIcon = createAppIcon(Folder);
+export const FolderInputIcon = createAppIcon(FolderInput);
+export const PencilLineIcon = createAppIcon(PenLine);
 export const GlobeAltIcon = createAppIcon(Globe);
 export const GripVerticalIcon = createAppIcon(GripVertical);
 export const HomeIcon = createAppIcon(Home);
 export const InformationCircleIcon = createAppIcon(Info);
 export const KeyIcon = createAppIcon(KeyRound);
 export const LifebuoyIcon = createAppIcon(LifeBuoy);
-export const MinusIcon = createAppIcon(Minus);
+export const ListPlusIcon = createAppIcon(ListPlus);export const MinusIcon = createAppIcon(Minus);
+export const ListTreeIcon = createAppIcon(ListTree, "14px");
 export const MoonIcon = createAppIcon(Moon);
 export const PanelLeftIcon = createAppIcon(PanelLeft);
+export const PaperclipIcon = createAppIcon(Paperclip);
 export const PlusIcon = createAppIcon(Plus);
 export const ServerIcon = createAppIcon(Server);
 export const ShieldCheckIcon = createAppIcon(ShieldCheck);
 export const SunIcon = createAppIcon(Sun);
 export const SwatchIcon = createAppIcon(Palette);
 export const TrashIcon = createAppIcon(Trash2);
+export const Undo2Icon = createAppIcon(Undo2);
 export const XMarkIcon = createAppIcon(X);
 
 export const FileDiffIcon = createAppIcon(FileDiff, "18px");
@@ -102,6 +113,7 @@ export const IconBadgeSparkle = createAppIcon(Sparkles);
 export const IconBox = createAppIcon(Box, "18px");
 export const IconChat = createAppIcon(MessageCircle, "18px");
 export const IconEye = createAppIcon(Eye);
+export const IconGitBranch = createAppIcon(GitBranch, "18px");
 export const IconGitPullRequest = createAppIcon(GitPullRequest, "18px");
 export const IconGridPlus = createAppIcon(Grid2X2Plus, "18px");
 export const IconMagnifier = createAppIcon(Search);

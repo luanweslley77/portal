@@ -82,6 +82,7 @@ function DiffPage() {
             options={{
               diffStyle: "unified",
               diffIndicators: "bars",
+              overflow: "wrap",
             }}
           />
         ))}

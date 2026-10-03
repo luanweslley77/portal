@@ -2,13 +2,11 @@ import {
   ArrowRightStartOnRectangleIcon,
   ChevronUpDownIcon,
   Cog6ToothIcon,
-  EllipsisHorizontalIcon,
   FileDiffIcon,
   HomeIcon,
   LifebuoyIcon,
   PlusIcon,
   ShieldCheckIcon,
-  TrashIcon,
 } from "@/components/icons/lucide";
 import { ProviderIcon } from "@/components/icons/provider-icon";
 import { useEffect, useState, useMemo } from "react";
@@ -41,19 +39,22 @@ import {
   SidebarItem,
   SidebarLabel,
   SidebarLink,
-  SidebarMenuTrigger,
   SidebarRail,
   SidebarSection,
   SidebarSectionGroup,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   useSessions,
   useCreateSession,
   useDeleteSession,
+  useUpdateSession,
+  useMoveSession,
   useHostname,
   useGitDiff,
   useInstances,
 } from "@/hooks/use-opencode";
+import { SessionActionsMenu } from "@/components/session-actions-menu";
 import { useInstanceStore } from "@/stores/instance-store";
 import { useNavigate, useMatch } from "@tanstack/react-router";
 import type { Session } from "@opencode-ai/sdk/v2";
@@ -186,14 +187,23 @@ export default function AppSidebar(
   props: React.ComponentProps<typeof Sidebar>,
 ) {
   const [creating, setCreating] = useState(false);
+  const [menuSessionId, setMenuSessionId] = useState<string | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const navigate = useNavigate();
   const instance = useInstanceStore((s) => s.instance);
+  const { isMobile, setIsOpenOnMobile } = useSidebar();
   const { data: hostnameData } = useHostname();
   const hostname = hostnameData?.hostname ?? "Loading...";
   const { data: sessionsData, mutate: mutateSessions } = useSessions();
   const createSession = useCreateSession();
   const deleteSession = useDeleteSession();
+  const updateSession = useUpdateSession();
+  const moveSession = useMoveSession();
   const sessions: Session[] = sessionsData ?? [];
+  const mainSessions = useMemo(
+    () => sessions.filter((session) => !session.parentID),
+    [sessions],
+  );
 
   const { data: diffData } = useGitDiff();
   const diffFileCount = useMemo(() => {
@@ -243,6 +253,16 @@ export default function AppSidebar(
     }
   }
 
+  async function handleRenameSession(sessionId: string, title: string) {
+    await updateSession(sessionId, title);
+    await mutateSessions();
+  }
+
+  async function handleMoveSession(sessionId: string, directory: string) {
+    await moveSession(sessionId, directory);
+    await mutateSessions();
+  }
+
   return (
     <Sidebar {...props}>
       <SidebarHeader>
@@ -273,6 +293,9 @@ export default function AppSidebar(
             <SidebarItem
               tooltip="View Git Diff"
               href="/diff"
+              onPress={() => {
+                if (isMobile) setIsOpenOnMobile(false);
+              }}
               className="cursor-pointer gap-x-2"
               badge={diffFileCount > 0 ? diffFileCount : undefined}
             >
@@ -282,36 +305,40 @@ export default function AppSidebar(
           </SidebarSection>
 
           <SidebarSection label="Sessions">
-            {sessions.map((session) => (
-              <SidebarItem key={session.id} tooltip={session.title}>
-                {({ isCollapsed, isFocused }) => (
+            {mainSessions.map((session) => (
+              <SidebarItem
+                key={session.id}
+                tooltip={session.title}
+                onContextMenu={(e) => {
+                  if (dialogOpen) return;
+                  e.preventDefault();
+                  setMenuSessionId(session.id);
+                }}
+              >
+                {() => (
                   <>
-                    <SidebarLink href={`/session/${session.id}`}>
+                    <SidebarLink
+                      href={`/session/${session.id}`}
+                      onPress={() => {
+                        if (isMobile) setIsOpenOnMobile(false);
+                      }}
+                    >
                       <SidebarLabel>
                         {truncateTitle(session.title)}
                       </SidebarLabel>
                     </SidebarLink>
-                    {(!isCollapsed || isFocused) && (
-                      <Menu>
-                        <SidebarMenuTrigger aria-label="Session options">
-                          <EllipsisHorizontalIcon />
-                        </SidebarMenuTrigger>
-                        <MenuContent
-                          popover={{
-                            offset: 0,
-                            placement: "right top",
-                          }}
-                        >
-                          <MenuItem
-                            intent="danger"
-                            onAction={() => handleDeleteSession(session.id)}
-                          >
-                            <TrashIcon />
-                            Delete Session
-                          </MenuItem>
-                        </MenuContent>
-                      </Menu>
-                    )}
+                    <SessionActionsMenu
+                      sessionId={session.id}
+                      sessionTitle={session.title}
+                      isOpen={menuSessionId === session.id}
+                      onOpenChange={(open) =>
+                        setMenuSessionId(open ? session.id : null)
+                      }
+                      onDelete={handleDeleteSession}
+                      onRename={handleRenameSession}
+                      onMove={handleMoveSession}
+                      onDialogOpenChange={setDialogOpen}
+                    />
                   </>
                 )}
               </SidebarItem>

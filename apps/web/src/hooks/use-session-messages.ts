@@ -60,13 +60,135 @@ const EMPTY_TOKENS = {
   },
 };
 
+const queuedMessages = new Map<string, Map<string, string>>();
+
+const legacyConversionCache = new Map<
+  string,
+  Map<string, { source: SessionMessage; legacy: MessageWithParts }>
+>();
+
+function convertSessionMessage(
+  message: SessionMessage,
+  sessionId: string,
+): MessageWithParts | null {
+  switch (message.type) {
+    case "user":
+      return {
+        info: legacyUserInfo(message, sessionId),
+        parts: [
+          textPart(
+            `${message.id}-text`,
+            sessionId,
+            message.id,
+            message.text,
+          ),
+        ],
+        isQueued: message.metadata?.portalQueued === true,
+      };
+
+    case "assistant":
+      return {
+        info: legacyAssistantInfo(message, sessionId),
+        parts: assistantParts(message, sessionId),
+      };
+
+    case "synthetic":
+      return {
+        info: syntheticAssistantInfo(message, sessionId),
+        parts: [
+          textPart(
+            `${message.id}-synthetic`,
+            sessionId,
+            message.id,
+            message.text,
+            true,
+          ),
+        ],
+      };
+
+    case "shell":
+      return {
+        info: shellAssistantInfo(message, sessionId),
+        parts: [shellToolPart(message, sessionId)],
+      };
+
+    case "agent-switched":
+    case "model-switched":
+    case "compaction":
+      return null;
+  }
+}
+
+function sessionMessagesToLegacyCached(
+  cacheKey: string,
+  messages: SessionMessage[],
+  sessionId: string,
+): MessageWithParts[] {
+  let perKey = legacyConversionCache.get(cacheKey);
+  if (!perKey) {
+    perKey = new Map();
+    legacyConversionCache.set(cacheKey, perKey);
+  }
+
+  const seen = new Set<string>();
+  const out: MessageWithParts[] = [];
+  for (const message of messages) {
+    const cached = perKey.get(message.id);
+    if (cached && cached.source === message) {
+      out.push(cached.legacy);
+      seen.add(message.id);
+      continue;
+    }
+    const legacy = convertSessionMessage(message, sessionId);
+    if (!legacy) continue;
+    perKey.set(message.id, { source: message, legacy });
+    out.push(legacy);
+    seen.add(message.id);
+  }
+
+  for (const id of perKey.keys()) {
+    if (!seen.has(id)) perKey.delete(id);
+  }
+
+  return out;
+}
+
+function getQueuedMessages(key: string) {
+  let map = queuedMessages.get(key);
+  if (!map) {
+    map = new Map();
+    queuedMessages.set(key, map);
+  }
+  return map;
+}
+
+export function markMessageQueued(
+  key: string,
+  messageId: string,
+  text: string,
+) {
+  getQueuedMessages(key).set(messageId, text);
+}
+
+export function clearMessageQueued(key: string, messageId: string) {
+  getQueuedMessages(key).delete(messageId);
+}
+
+export function isMessageQueued(key: string, messageId: string) {
+  return getQueuedMessages(key).has(messageId);
+}
+
 const fetcher = async (url: string): Promise<SessionMessage[]> => {
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error("Failed to fetch messages");
   }
   const data = await response.json();
-  return normalizeFetchedMessages(data);
+  const normalized = normalizeFetchedMessages(data);
+  return preserveCompletedState(
+    url,
+    reapplyQueuedMetadata(url, normalized),
+  );
 };
 
 function useBackend() {
@@ -95,12 +217,37 @@ export function useSessionMessages(sessionId: string | undefined) {
   } = useSWR<SessionMessage[]>(key, fetcher, {
     keepPreviousData: true,
     revalidateOnFocus: false,
+    dedupingInterval: 0,
   });
 
-  const messages = useMemo(
-    () => (sessionId ? sessionMessagesToLegacy(data ?? [], sessionId) : []),
-    [data, sessionId],
-  );
+  const pendingAssistantID = useMemo(() => {
+    const assistants = (data ?? []).filter(
+      (message) => message.type === "assistant",
+    );
+    const lastCompleted = [...assistants]
+      .reverse()
+      .find((message) => message.time.completed)?.id;
+    return [...assistants]
+      .reverse()
+      .find(
+        (message) =>
+          !message.time.completed &&
+          (!lastCompleted || message.id > lastCompleted),
+      )?.id;
+  }, [data]);
+
+  const messages = useMemo(() => {
+    const converted = sessionId
+      ? sessionMessagesToLegacyCached(key ?? "", data ?? [], sessionId)
+      : [];
+    if (!pendingAssistantID) return converted;
+    return converted.map((message) =>
+      message.info.role === "user" &&
+      message.info.id > pendingAssistantID
+        ? { ...message, isQueued: true }
+        : message,
+    );
+  }, [key, data, sessionId, pendingAssistantID]);
 
   return {
     messages,
@@ -160,6 +307,104 @@ function normalizeFetchedMessages(data: unknown) {
   }
 
   return sortSessionMessages(messages as SessionMessage[]);
+}
+
+export function reapplyQueuedMetadata(key: string, messages: SessionMessage[]) {
+  const queued = getQueuedMessages(key);
+  if (queued.size === 0) return messages;
+
+  const queuedTextCounts = new Map<string, number>();
+  for (const text of queued.values()) {
+    queuedTextCounts.set(text, (queuedTextCounts.get(text) ?? 0) + 1);
+  }
+  const messageTextCounts = new Map<string, number>();
+  for (const message of messages) {
+    if (message.type !== "user") continue;
+    messageTextCounts.set(
+      message.text,
+      (messageTextCounts.get(message.text) ?? 0) + 1,
+    );
+  }
+
+  return messages.map((message) => {
+    if (message.type !== "user") return message;
+    const tracked =
+      queued.has(message.id) ||
+      (queuedTextCounts.get(message.text) === 1 &&
+        messageTextCounts.get(message.text) === 1);
+    if (!tracked) return message;
+    return {
+      ...message,
+      metadata: {
+        ...(message.metadata ?? {}),
+        portalQueued: true,
+      },
+    };
+  });
+}
+
+const knownCompletedMessages = new Map<
+  string,
+  Map<string, { completed: number; finish?: string }>
+>();
+
+function preserveCompletedState(
+  key: string,
+  messages: SessionMessage[],
+): SessionMessage[] {
+  let perKey = knownCompletedMessages.get(key);
+  if (!perKey) {
+    perKey = new Map();
+    knownCompletedMessages.set(key, perKey);
+  }
+
+  const next = messages.map((message) => {
+    if (message.type !== "assistant") return message;
+
+    const known = perKey.get(message.id);
+    if (known) {
+      return {
+        ...message,
+        time: { ...message.time, completed: known.completed },
+        ...(known.finish ? { finish: known.finish } : {}),
+      };
+    }
+
+    if (typeof message.time.completed === "number") {
+      perKey.set(message.id, {
+        completed: message.time.completed,
+        finish: message.finish,
+      });
+    }
+    return message;
+  });
+
+  for (const id of perKey.keys()) {
+    if (!next.some((message) => message.id === id)) perKey.delete(id);
+  }
+
+  return next;
+}
+
+export function preserveCompletedForCache(
+  key: string,
+  messages: SessionMessage[],
+) {
+  return preserveCompletedState(key, messages);
+}
+
+export function recordCompletedMessage(
+  key: string,
+  messageId: string,
+  completed: number,
+  finish?: string,
+) {
+  let perKey = knownCompletedMessages.get(key);
+  if (!perKey) {
+    perKey = new Map();
+    knownCompletedMessages.set(key, perKey);
+  }
+  perKey.set(messageId, { completed, finish });
 }
 
 function isMessageWithParts(value: unknown): value is MessageWithParts {
@@ -289,7 +534,7 @@ function legacyAssistantContent(
 
   message.parts.forEach((part) => {
     if (part.type === "text") {
-      content.push({ type: "text", text: part.text });
+      content.push({ type: "text", id: part.id, text: part.text });
       return;
     }
 
@@ -662,7 +907,7 @@ function assistantParts(
     if (item.type === "text") {
       parts.push(
         textPart(
-          `${message.id}-text-${index}`,
+          item.id ?? `${message.id}-text-${index}`,
           sessionId,
           message.id,
           item.text,
@@ -694,60 +939,8 @@ export function sessionMessagesToLegacy(
 ): MessageWithParts[] {
   return sortSessionMessages(messages).flatMap(
     (message): MessageWithParts[] => {
-      switch (message.type) {
-        case "user":
-          return [
-            {
-              info: legacyUserInfo(message, sessionId),
-              parts: [
-                textPart(
-                  `${message.id}-text`,
-                  sessionId,
-                  message.id,
-                  message.text,
-                ),
-              ],
-              isQueued: message.metadata?.portalQueued === true,
-            },
-          ];
-
-        case "assistant":
-          return [
-            {
-              info: legacyAssistantInfo(message, sessionId),
-              parts: assistantParts(message, sessionId),
-            },
-          ];
-
-        case "synthetic":
-          return [
-            {
-              info: syntheticAssistantInfo(message, sessionId),
-              parts: [
-                textPart(
-                  `${message.id}-synthetic`,
-                  sessionId,
-                  message.id,
-                  message.text,
-                  true,
-                ),
-              ],
-            },
-          ];
-
-        case "shell":
-          return [
-            {
-              info: shellAssistantInfo(message, sessionId),
-              parts: [shellToolPart(message, sessionId)],
-            },
-          ];
-
-        case "agent-switched":
-        case "model-switched":
-        case "compaction":
-          return [];
-      }
+      const legacy = convertSessionMessage(message, sessionId);
+      return legacy ? [legacy] : [];
     },
   );
 }
@@ -774,6 +967,10 @@ export function addOptimisticMessage(
     },
   };
 
+  if (message.isQueued === true) {
+    markMessageQueued(key, optimisticMessage.id, optimisticMessage.text);
+  }
+
   mutate(
     key,
     (current: SessionMessage[] | undefined) => {
@@ -784,8 +981,39 @@ export function addOptimisticMessage(
   );
 
   return () => {
+    clearMessageQueued(key, optimisticMessage.id);
     mutate(key, previousMessages, { revalidate: false });
   };
+}
+
+export function removeOptimisticUserMessages(
+  messages: SessionMessage[],
+  key: string,
+  messageId: string,
+  text: string,
+) {
+  const exact = messages.filter(
+    (message) =>
+      message.type === "user" &&
+      message.metadata?.portalOptimistic === true &&
+      message.id === messageId,
+  );
+  if (exact.length > 0) {
+    clearMessageQueued(key, messageId);
+    return messages.filter((message) => !exact.includes(message));
+  }
+  if (!text) return messages;
+
+  const candidates = messages.filter(
+    (message) =>
+      message.type === "user" &&
+      message.metadata?.portalOptimistic === true &&
+      message.text === text,
+  );
+  if (candidates.length !== 1) return messages;
+
+  clearMessageQueued(key, candidates[0].id);
+  return messages.filter((message) => message !== candidates[0]);
 }
 
 export function reconcileOptimisticMessage(
@@ -801,16 +1029,33 @@ export function reconcileOptimisticMessage(
     key,
     (current: SessionMessage[] | undefined) => {
       const messages = current ?? [];
-      const withoutOptimistic = messages.filter((message) => {
-        if (message.id === optimisticId) return false;
-        return !(
-          actualMessage.type === "user" &&
-          message.type === "user" &&
-          message.text === actualMessage.text &&
-          message.metadata?.portalOptimistic === true
-        );
-      });
-      return sortSessionMessages([...withoutOptimistic, actualMessage]);
+      const wasQueued =
+        isMessageQueued(key, optimisticId) ||
+        (actualMessage.type === "user" &&
+          isMessageQueued(key, actualMessage.id));
+      const withoutOptimistic = removeOptimisticUserMessages(
+        messages,
+        key,
+        optimisticId,
+        actualMessage.type === "user" ? actualMessage.text : "",
+      );
+
+      const reconciled =
+        actualMessage.type === "user" && wasQueued
+          ? {
+              ...actualMessage,
+              metadata: {
+                ...(actualMessage.metadata ?? {}),
+                portalQueued: true,
+              },
+            }
+          : actualMessage;
+
+      if (actualMessage.type === "user" && wasQueued) {
+        markMessageQueued(key, actualMessage.id, actualMessage.text);
+      }
+
+      return sortSessionMessages([...withoutOptimistic, reconciled]);
     },
     { revalidate: false },
   );
@@ -828,18 +1073,23 @@ export function settleOptimisticMessage(
     key,
     (current: SessionMessage[] | undefined) => {
       if (!current) return current;
-      return current.map((message) => {
+      const settled = current.map((message) => {
         if (message.id !== messageId || message.type !== "user") return message;
+
+        const wasQueued = isMessageQueued(key, messageId);
 
         return {
           ...message,
           metadata: {
             ...(message.metadata ?? {}),
             portalPending: false,
-            portalQueued: false,
+            ...(wasQueued
+              ? { portalQueued: true }
+              : { portalQueued: false }),
           },
         };
       });
+      return settled;
     },
     { revalidate: false },
   );
@@ -886,6 +1136,7 @@ export function removeOptimisticMessage(
   provider?: BackendProvider,
 ) {
   const key = getMessagesKey(port, sessionId, provider);
+  clearMessageQueued(key, messageId);
 
   mutate(
     key,

@@ -1,0 +1,103 @@
+# AGENTS.md — Portal (OpenCode Portal)
+
+## O que é
+
+Web UI **mobile-first** para [OpenCode](https://opencode.ai) (chat com o agente de IA), projeto pessoal (fork). Monorepo Bun workspaces:
+
+- `apps/web` — app React (TanStack Router) + servidor Nitro
+- `apps/docs` — documentação
+- `packages/cli` — CLI do openportal
+
+### Remotes e branch
+
+- `origin` — https://github.com/hosenur/portal.git (upstream)
+- `fork` — https://github.com/luanweslley77/portal.git (fork de trabalho)
+- Branch de trabalho: **`fix/mobile-content-clipping`**
+
+Regras de git: **nunca** push para `origin/main`; push apenas para `fork` na branch de trabalho; **não** criar PR sem pedido explícito.
+
+## Fluxo de desenvolvimento (loop completo)
+
+### 1. Edição
+
+Arquivos em `apps/web/src/` (routes em `apps/web/src/routes/`, componentes em `apps/web/src/components/`, hooks de dados em `apps/web/src/hooks/`).
+
+### 2. Typecheck
+
+```bash
+cd apps/web && npx tsc --noEmit
+```
+
+**3 erros pré-existentes** (não mexer sem pedido; não introduzir novos):
+
+- `src/hooks/use-opencode-events.ts:218` — TS2339: `Property 'id' does not exist` (unions de `SessionMessageAssistant*`)
+- `src/hooks/use-session-messages.ts:488` — TS2353: `'id'` não existe em `SessionMessageAssistantText`
+- `src/hooks/use-session-messages.ts:861` — TS2339: `Property 'id'` em `SessionMessageAssistantText`
+
+### 3. Build
+
+```bash
+cd apps/web && bun run build
+```
+
+Vite + Nitro (preset `bun`, `nitro.config.ts`); saída em `apps/web/.output/` (server em `.output/server/`, assets em `.output/public/assets/`). Requer `bun install` prévio (bun.lock; `packageManager: bun@1.3.13`).
+
+### 4. Deploy local — o portal roda do pacote GLOBAL, não do repo
+
+O `bunx openportal` **não baixa do npm**: executa o binário global `~/.bun/bin/openportal` (symlink → `~/.bun/install/global/node_modules/openportal/dist/index.js`), que serve a UI de `web/server` + `web/public` **do próprio pacote global**. Por isso o build copiado para lá é o que roda. (Só o CLI `dist/` permanece o original 0.1.32.)
+
+**Um comando faz build + copy + kill:**
+
+```bash
+bash scripts/deploy.sh
+```
+
+# Restart manual — subir de novo (processos longos: term-cli, o bash tool mata no timeout)
+term-cli run --session portal "bunx openportal" --timeout 20
+sleep 7
+curl -s http://localhost:3000/ | grep -oE 'src="[^"]+\.js"' | head -1  # hash mudou = build novo servido
+
+> **Auth (Basic Auth)**: nativo no fonte desde o merge de `fix/basic-auth-support` (`a5815bd`) — lê `OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD` em `instances.ts` e `opencode-client.ts`. **NÃO precisa mais do `~/.local/bin/portal-auth-patch.sh`** pós-build; se rodar por engano, é inofensivo (idempotente).
+
+### 5. Validação visual (chrome devtools)
+
+- Emulações: mobile **390x844** (deviceScaleFactor 2, touch) e desktop **1280x800**
+- Reload **sempre com `ignoreCache`** (assets imutáveis ficam em cache)
+- Navegação: `/instances` → instância OPENCODE → uma sessão (ex: `ses_0055986e...`)
+- Simular digitação: `Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, texto)` + `dispatchEvent(new Event('input', { bubbles: true }))` — só `ta.value = x` não atualiza o React (valor controlado)
+- Re-emular o viewport ao abrir página nova (emulação é por página) e recomeçar do `/instances`
+
+### 6. Commit + push
+
+```bash
+git add -A && git commit -m "tipo(web): resumo do problema/causa/fix"
+git push fork fix/mobile-content-clipping
+```
+
+Mensagens no padrão da sessão: `fix(web)`, `feat(web)`, `style(web)`, `docs:` — com descrição do problema, causa e fix (ex: "fix(web): stable wrapper detection, no mode oscillation").
+
+## Arquitetura (pontos-chave)
+
+- **Nitro**: `nitro.config.ts` (preset `bun`, `serverDir "."`); API em `apps/web/src/server/`; no build viram `_routes` dentro de `.output/server/`.
+- **Front**: TanStack Router, IntentUI (react-aria-components), Tailwind v4 (`@tailwindcss/vite`), SWR (dados), `@opencode-ai/sdk`.
+- **Composer (textarea)** — arquitetura estilo ChatGPT (ver `SPEC_patch.md` §9 para a evolução completa):
+  - Caixa com borda/ring (`focus-within`) → wrapper de scroll (`max-h-60 overflow-y-auto` + `pb-12` condicional quando `wrapped`) → textarea com `field-sizing-content` (cresce livre, sem max próprio)
+  - Botões absolute na base: clipe (`left-1 bottom-1 z-10`), enviar (`right-2 bottom-1`)
+  - Estado `wrapped`: detecção de quebra de linha (Enter OU wrap automático) via textarea de medição **oculto** (`measureRef`, largura fixa do modo 1 linha = `wrapper.clientWidth − 96px`) — estável, sem oscilação
+  - Modo 1 linha: `min-h-11 pt-3 pb-1 pl-11! pr-13!` (texto entre os botões); modo wrapper: `min-h-12 py-2` (padding simétrico do componente)
+- **`SPEC_patch.md`** (raiz): documento vivo de bugs/correções da UI — atualizar com seção nova a cada correção relevante.
+
+## Convenções
+
+- TypeScript em tudo; componentes em `apps/web/src/components/`; Tailwind; alias `@/` → `apps/web/src`
+- Ao sobrescrever classes do componente base (ex: `ui/textarea.tsx` tem `sm:px/py` que vencem na cascade em ≥640px), usar **`!`** (important) no className do chamador — já causou bug real
+- Não usar python/pip diretamente (usar uv)
+- Dev: `bun dev` na raiz (turbo) ou `cd apps/web && bunx vite`
+
+## Regras de processo — cautela dobrada
+
+- **Não ir por atalhos**: validar com o gesto real do usuário (drag/touch reais, CDP), nunca só com seleção DOM sintética ou só `prev:true`/`len>0`.
+- **Considerar todos os casos antes de declarar pronto**: enumerar os cenários (parcial, borda/reticência, spanning, textarea focado, composer, múltiplos cards) e testar cada um — nenhum pode ficar de fora.
+- **Desconfiar de resultados bons demais ou idênticos demais**: antes de concluir, auditar o teste — a seleção era fresca? a geometria é a atual? o resultado bate com o valor esperado exato, não só "não-vazio"?
+- **Medir antes de editar**: comportamento dependente de API do browser (seleção/clipboard/geometria) → medir primeiro, depois mudar código.
+- **Consistência**: um único critério/handler para todos os casos; nenhuma heurística específica por caso sem evidência medida.
