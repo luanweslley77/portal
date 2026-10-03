@@ -1176,30 +1176,98 @@ const ReasoningBlock = memo(function ReasoningBlock({
   mode: ThinkingMode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const pointerDownRef = useRef<{
+    x: number;
+    y: number;
+    hadSelection: boolean;
+  } | null>(null);
+  const clickTimerRef = useRef<number | null>(null);
   const content = reasoningText(part);
-  if (!content) return null;
   const done = part.time.end !== undefined;
   const open = mode === "show" || expanded;
+  const interactive = mode === "hide";
+
+  const toggleImmediately = () => {
+    setExpanded((value) => !value);
+  };
+
+  const toggleExpanded = (event?: React.MouseEvent) => {
+    if (event && (event.target as HTMLElement).closest("a")) return;
+    if (clickTimerRef.current !== null) {
+      window.clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      return;
+    }
+    if (window.getSelection()?.toString()) return;
+    if (event && event.detail > 1) return;
+    if (pointerDownRef.current && event) {
+      if (pointerDownRef.current.hadSelection) return;
+      const dx = event.clientX - pointerDownRef.current.x;
+      const dy = event.clientY - pointerDownRef.current.y;
+      if (Math.hypot(dx, dy) > 4) return;
+    }
+    pointerDownRef.current = null;
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      setExpanded((value) => !value);
+    }, 250);
+  };
+
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current !== null) {
+        window.clearTimeout(clickTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  if (!content) return null;
 
   return (
     <div
       data-reasoning-block
-      className="mb-2 overflow-hidden rounded-md border border-border bg-muted/25"
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-expanded={open}
+      onClick={interactive ? toggleExpanded : undefined}
+      onPointerDown={
+        interactive
+          ? (event) => {
+              pointerDownRef.current = {
+                x: event.clientX,
+                y: event.clientY,
+                hadSelection: !!window.getSelection()?.toString(),
+              };
+            }
+          : undefined
+      }
+      onKeyDown={
+        interactive
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                if (clickTimerRef.current !== null) {
+                  window.clearTimeout(clickTimerRef.current);
+                  clickTimerRef.current = null;
+                }
+                toggleImmediately();
+              }
+            }
+          : undefined
+      }
+      className={`mb-2 overflow-hidden rounded-md border border-border bg-muted/25 ${
+        interactive ? "cursor-pointer" : ""
+      }`}
     >
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        disabled={mode === "show"}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs text-muted-fg"
-      >
+      <div className="flex w-full items-center gap-1.5 px-2.5 py-1 text-left text-xs text-muted-fg">
         {!done && (
           <Ripples size="16" speed="2" color="var(--color-primary)" />
         )}
         <span className={done ? "" : "animate-pulse"}>
           {done ? "Thought" : "Thinking..."}
         </span>
-        {mode === "hide" && (
+        {interactive && (
           <ChevronDownIcon
             size="12px"
             className={`ml-auto shrink-0 transition-transform ${
@@ -1207,7 +1275,7 @@ const ReasoningBlock = memo(function ReasoningBlock({
             }`}
           />
         )}
-      </button>
+      </div>
       {open && (
         <div
           data-reasoning-body

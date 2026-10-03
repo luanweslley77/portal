@@ -996,8 +996,8 @@ Disponibilizar no Portal o `/thinking` do TUI. No TUI (`packages/tui/src/context
 
 ### 24.2 Semântica adotada
 
-- `hide` (default): cabeçalho de uma linha com `+`/seta, rótulo `Thought` (concluído) ou `Thinking...` pulsando com spinner (ainda em stream); clique alterna o corpo daquele bloco.
-- `show`: corpo markdown sempre aberto; cabeçalho não interativo.
+- `hide` (default): cabeçalho de uma linha com `+`/seta, rótulo `Thought` (concluído) ou `Thinking...` pulsando com spinner (ainda em stream); **clicar em qualquer parte do bloco (cabeçalho ou corpo) recolhe/expande**, igual aos cards de tool — com as mesmas proteções: seleção de texto em andamento (capturada no pointerdown), arrasto >4px, duplo clique e clique em link (`<a>`) não alternam.
+- `show`: corpo markdown sempre aberto; cabeçalho/bloco não interativo.
 - Preferência persistida em `localStorage` (`portal-thinking-mode`); `/thinking` faz o ciclo. `[REDACTED]` (reasoning criptografado) é removido; bloco sem texto não renderiza (mesmo critério do TUI: `Show when content() || opaque()`).
 
 ### 24.3 Implementação
@@ -1025,6 +1025,7 @@ Captura do stream (`message.part.updated`) durante um turno real: o part de reas
 - **Streaming (interceptado)**: rótulo `Thinking...`, `animate-pulse`, spinner presente + chevron, recolhido; clique expande o corpo em stream.
 - **Live real**: sessão nova com `commandcode/deepseek-v4.1-flash` (variant max) — bloco termina como `Thought`, recolhido no modo `hide`, corpo com texto ao expandir.
 - **Desktop 1280x800**: Enter no popover completa `/thinking` e o 2º Enter envia; modo/visibilidade aplicam; 48/48 corpos; sem overflow horizontal.
+- **Recolher clicando em qualquer parte** (`:3000`, gesto real CDP): clique no cabeçalho expande; clique no corpo recolhe; drag-select real dentro do corpo mantém o bloco aberto e a seleção (23 chars) intacta; `Enter` com o bloco focado alterna; em `show` o bloco não é interativo (clique no corpo não fecha); clique num link markdown do reasoning é entregue ao `<a>` e não recolhe.
 - Sessões de teste (`ses_f006...`, `ses_f005...`) removidas via API.
 
 ### 24.7 Deploy
