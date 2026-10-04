@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
 import { Breadcrumbs, BreadcrumbsItem } from "@/components/ui/breadcrumbs";
 import { Button } from "@/components/ui/button";
+import { ContextUsage } from "@/components/context-usage";
 import { SidebarNav, SidebarTrigger } from "@/components/ui/sidebar";
 import {
   Sheet,
@@ -321,6 +322,7 @@ export function AppSidebarNav() {
           </BreadcrumbsItem>
           {pageTitle && <BreadcrumbsItem>{pageTitle}</BreadcrumbsItem>}
         </Breadcrumbs>
+        {sessionId && <ContextUsage sessionId={sessionId} />}
       </span>
       <span className="flex items-center gap-x-2 ml-auto">
         {sessionId && (

@@ -1123,3 +1123,44 @@ O CSS de tabela do `main.css` força colunas de largura igual (`thead`/`tbody` v
 - **320×700**: tabela 246 px, 0 overflow; parágrafo com code longo quebra em 5 linhas (`right` 294 ≤ 295 do `.prose`); `<pre>` mantém scroll (`clientWidth` 246, `scrollWidth` 862) — sem regressão.
 - **Desktop 1280×800**: idem, 0 overflow.
 - `npx tsc --noEmit` sem novos erros (só os 3 pré-existentes).
+
+## 28. Uso de contexto (tokens + porcentagem) no topo, paridade com o TUI
+
+### 28.1 Pedido (feedback do usuário)
+
+"Exibir na parte superior a quantidade de tokens do contexto e a porcentagem, assim como o TUI faz."
+
+### 28.2 Referência no TUI
+
+A linha de status do prompt (`packages/tui/src/component/prompt/index.tsx`) e o plugin de sidebar (`feature-plugins/sidebar/context.tsx`) usam:
+
+- última mensagem assistant com `tokens.output > 0` (`findLast`);
+- `tokens = input + output + reasoning + cache.read + cache.write`;
+- `pct = round(tokens / model.limit.context * 100)` (só quando o modelo tem `limit.context`);
+- formatação compacta `80.1K (8%)` (`Locale.number`: `x.xM`/`x.xK`/inteiro).
+
+### 28.3 Implementação
+
+1. **`apps/web/src/components/context-usage.tsx` (novo)** — `ContextUsage({ sessionId })`:
+   - `useSessionMessages(sessionId)` (mesma chave SWR da página da sessão; sem request extra) para as mensagens normalizadas (v2);
+   - `useProviders()` para achar `models[modelID].limit.context` do provider da mensagem;
+   - mesma fórmula/filtro do TUI; retorna `null` (não renderiza) sem assistant com `output > 0` ou com total 0; sem `limit.context` mostra só `x.xK` (mesmo fallback do TUI);
+   - `aria-label` com os números completos (`Context: 135.818 / 1.000.000 tokens (14%)`).
+2. **`app-sidebar-nav.tsx`** — renderiza `<ContextUsage sessionId={sessionId} />` ao lado dos breadcrumbs (esquerda da barra), antes dos botões TASKS/GIT.
+
+### 28.4 Decisão: sem pointer-events/tooltip
+
+A primeira versão usava `title` nativo (números completos no hover) e por isso ganhava `pointer-events-auto`. Medição com arrasto real (CDP) mostrou a regressão da §25: com o endpoint do arrasto sobre o indicador a seleção parava (6 chars vs 278 chars no vão ao lado). O `title` foi removido; o componente herda `pointer-events:none`/`select-none` da barra (o arrasto atravessa) e o `aria-label` mantém a informação acessível.
+
+### 28.5 Verificação (bundle index-bQZRTqVU.js)
+
+- `npx tsc --noEmit` → mesmos 3 erros pré-existentes; build ok.
+- **Mobile 390x844, sessão real**: indicador `135.8K (14%)` = exatamente a fórmula do TUI recalculada via `/messages` + `/providers` (`tokens=135.818`, `limit=1.000.000`, `14%`); `aria-label` completo; `pointer-events:none`, `user-select:none`, mono 12px; sem overlap com TASKS/GIT (indicador termina em x=151, grupo direito começa em 214) e sem scroll horizontal.
+- **Seleção (gesto real, live)**: arrasto com endpoint sobre o indicador seleciona normalmente (411 chars) — sem bloqueio; §25 preservada.
+- **Sessão vazia** (criada via API, navegada pela lista): indicador ausente (`ctx=null`), TASKS/GIT intactos; sessão de teste deletada.
+- **Desktop 1280x800**: indicador após breadcrumbs (direita em 940, grupo direito em 1121), sem overflow (`scrollWidth == innerWidth`).
+- **Live updates**: valor acompanhou o crescimento da sessão durante a validação (117.1K → 135.8K), via SWR compartilhado com os eventos.
+
+### 28.6 Deploy
+
+Troca só do web server (backend da sessão preservado), como §23/§24: build copiado para o pacote global, `kill` no webPid antigo, novo servidor com `setsid nohup ... PORT=3000`, `~/.portal.json` `webPid` 539872 → 541573; `:3000` passou a servir `index-bQZRTqVU.js` (validado no browser).
