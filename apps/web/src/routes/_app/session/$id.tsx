@@ -69,6 +69,10 @@ import {
   type ThinkingMode,
 } from "@/hooks/use-thinking-mode";
 import {
+  markProgrammaticScroll,
+  useSelectionAutoscroll,
+} from "@/hooks/use-selection-autoscroll";
+import {
   useAgents,
   usePermissions,
   useQuestions,
@@ -1927,6 +1931,8 @@ function SessionPage() {
   const { commands } = useCommands(currentSession?.directory);
   const { thinkingMode, toggleThinkingMode } = useThinkingMode();
 
+  useSelectionAutoscroll(chatContainerRef);
+
   const messagesLoadError = messagesError?.message;
 
   const sessionStatus = sessionId
@@ -2007,6 +2013,7 @@ function SessionPage() {
   const scrollToBottom = useCallback(() => {
     const container = chatContainerRef.current;
     if (!container) return;
+    markProgrammaticScroll();
     container.scrollTo({
       top: container.scrollHeight,
       behavior: "smooth",
