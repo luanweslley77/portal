@@ -281,6 +281,14 @@ body {
   border: 1px solid var(--border);
 }
 
+/* Cada palavra das células vira um span (rehype-keep-words): o nowrap impede
+   também a quebra em hífens (ex.: "tone-mapeia", "DCI-P3", "--foo-bar"), sem
+   bloquear a quebra entre palavras — os espaços ficam fora dos spans. */
+.prose td .prose-word,
+.prose th .prose-word {
+  white-space: nowrap;
+}
+
 /* O wrapper assume o lugar da tabela como filho direto do .prose; replica os
    resets de margem do plugin (primeiro/último filho). */
 .prose .prose-table-wrap:first-child > table {

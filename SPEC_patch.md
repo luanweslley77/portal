@@ -1218,7 +1218,7 @@ Sessão `ses_ee407aa62ffe...` ("Como descobrir brilho máximo do monitor"), mobi
 - O `overflow-wrap: anywhere` do §27 (herdado pelas células) **cortava a palavra** quando nem ela cabia nos 45 px: `Tier` (4 letras) em 2 linhas, `maxPeakBrightnessOverride` em 3, `Reference=70` em 2.
 - Como o conteúdo sempre encolhia para caber, a tabela tinha `clientWidth == scrollWidth == 316` — o `overflow-x: auto` existia mas **nunca ativava**. Era essa a "lógica que não deixa deslizar".
 
-### 30.3 Fix
+### 30.3 Fix (parte 1 — largura natural + scroll)
 
 **`apps/web/src/routes/_app/session/$id.tsx`** — override do componente `table` no react-markdown (`markdownComponents`): a tabela agora vem embrulhada num `<div class="prose-table-wrap max-w-full overflow-x-auto">`, devolvendo a ela o `display: table` normal (um único elemento, `thead`/`tbody` alinhados pelo próprio algoritmo da tabela).
 
@@ -1229,15 +1229,23 @@ Sessão `ses_ee407aa62ffe...` ("Como descobrir brilho máximo do monitor"), mobi
 - Regras `.prose-table-wrap:first-child/last-child > table` replicam os resets de margem do plugin (o wrapper agora é o filho direto do `.prose`).
 - Parágrafos seguem com `overflow-wrap: anywhere` (§27 preservado).
 
-### 30.4 Verificação (build `index-Cf7jN6xu.js`, CDP com a tabela real)
+### 30.4 Fix (parte 2 — sem quebra nem em hífen)
 
-- **Mobile 390×844**: 0 palavras cortadas no meio em todas as 5 tabelas (antes: `Tier`, `Reference=70`, `maxPeakBrightnessOverride`); 0 células com overflow; alinhamento header/corpo com delta 0 em todas; página sem overflow horizontal (`scrollWidth == innerWidth == 390`).
-- **Rolagem real (touchStart → 10×touchMove → touchEnd)**: tabela VESA `wrapper 316/420` → rolou até 104/104 (fim); outra tabela `316/335` → 19/19. *(O `Input.synthesizeScrollGesture` touch do CDP headless não gera scroll; a sequência `Input.dispatchTouchEvent` gera.)*
-- **Desktop 1280×800**: as 5 tabelas cabem em 806 px, sem scroll, 0 cortes — as colunas passam a ter largura proporcional ao conteúdo (antes eram iguais).
-- **Sintético (§27, mobile)**: célula com path longo em `code` → wrapper 285/829 rolável, token inteiro em 1 linha, 0 overflow de célula; parágrafo com token sem espaços quebra em 3 linhas (comportamento do §27 intacto); página sem overflow.
-- **Hífens** (limitação assumida): palavras com hífen (`tone-mapeia`, `DCI-P3`, `screen-level`) ainda quebram **no hífen** — é uma oportunidade de quebra do CSS (`word-break: normal`), não um corte no meio do token; impedir exigiria `white-space: nowrap` em toda célula (tabela sempre larga, mesmo com frases).
+Após a parte 1 ainda quebravam palavras com hífen (`tone-mapeia`, `DCI-P3`, `screen-level`): hífen é oportunidade de quebra do CSS e **não existe propriedade que a desative** (`word-break: keep-all` não cobre latim — testado no Chrome; `hyphens: none` só desliga a hifenização automática). A saída é `white-space: nowrap` no token, mas aplicada palavra a palavra para não eliminar a quebra normal entre palavras:
+
+- **`apps/web/src/lib/rehype-keep-words.ts`** (novo): plugin rehype `rehypeKeepWords` percorre o hast e, dentro de `td`/`th`, transforma cada token não-branco num `<span class="prose-word">`; os espaços ficam **fora** dos spans, então a quebra entre palavras continua. `pre` dentro de célula é ignorado (newlines do bloco de código não podem colapsar).
+- **`main.css`**: `.prose th .prose-word, .prose td .prose-word { white-space: nowrap; }`.
+- **`$id.tsx`**: `rehypePlugins={[rehypeKeepWords]}` no `MemoizedMarkdown`.
+
+### 30.5 Verificação (build final `index-D20uqzyf.js`, CDP com a tabela real)
+
+- **Mobile 390×844**: **0** quebras em qualquer palavra nas 5 tabelas, inclusive hífens (antes: `Tier`, `Reference=70`, `maxPeakBrightnessOverride` e, após a parte 1, `tone-mapeia`/`DCI-P3`/`screen-level`); 0 células com overflow; alinhamento header/corpo delta 0; página sem overflow horizontal (`scrollWidth == innerWidth == 390`).
+- **Rolagem real (touchStart → 10×touchMove → touchEnd)**: tabela VESA `wrapper 316/452` → rolou até 136/136 (fim, largura cresceu porque as palavras com hífen agora ficam inteiras); outra tabela `316/335` → 19/19. *(O `Input.synthesizeScrollGesture` touch do CDP headless não gera scroll; a sequência `Input.dispatchTouchEvent` gera.)*
+- **Desktop 1280×800**: as 5 tabelas cabem em 806 px, sem scroll, 0 cortes — colunas proporcionais ao conteúdo; 231 `.prose-word` no DOM real e **0** dentro de `<pre>`.
+- **Plugin (unidade)**: pre dentro de `td` preservado byte a byte; tokens (incluindo dentro de `code` inline) envolvidos; espaços fora dos spans; parágrafo fora de tabela intacto.
+- **Sintético (§27, mobile)**: célula com path longo em `code` → wrapper 285/833 rolável, token inteiro em 1 linha, 0 overflow de célula; `<pre>` de 3 linhas na célula mantém `white-space: pre` e o texto com newlines; parágrafo com token sem espaços quebra em 3 linhas (comportamento do §27 intacto); página sem overflow.
 - `npx tsc --noEmit`: mesmos 3 erros pré-existentes.
 
-### 30.5 Deploy
+### 30.6 Deploy
 
-`bash scripts/deploy.sh` (build + cópia ao pacote global + restart): `:3000` serve `index-Cf7jN6xu.js` (hash validado).
+`bash scripts/deploy.sh` (build + cópia ao pacote global + restart). Intermediário (só parte 1): `index-Cf7jN6xu.js`; final: `:3000` serve `index-D20uqzyf.js` (hash validado).

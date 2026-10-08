@@ -29,6 +29,7 @@ import { StatusDialog } from "@/components/status-dialog";
 import { useSlashCommand } from "@/hooks/use-slash-command";
 import { useCommands, type SlashCommand } from "@/hooks/use-commands";
 import useMediaQuery from "@/hooks/use-media-query";
+import { rehypeKeepWords } from "@/lib/rehype-keep-words";
 import {
   ChevronDownIcon,
   IconBadgeSparkle,
@@ -1154,6 +1155,7 @@ const ToolCallItem = memo(function ToolCallItem({
 });
 
 const markdownPlugins = [remarkGfm];
+const markdownRehypePlugins = [rehypeKeepWords];
 
 const markdownComponents: Components = {
   table: ({ node: _node, ...props }) => (
@@ -1174,7 +1176,11 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
   content: string;
 }) {
   return (
-    <Markdown remarkPlugins={markdownPlugins} components={markdownComponents}>
+    <Markdown
+      remarkPlugins={markdownPlugins}
+      rehypePlugins={markdownRehypePlugins}
+      components={markdownComponents}
+    >
       {content}
     </Markdown>
   );
