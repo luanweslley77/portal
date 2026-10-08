@@ -1203,3 +1203,41 @@ Aplicado em `$id.tsx` (`useSelectionAutoscroll(chatContainerRef)`) e `scrollToBo
 ### 29.5 Deploy
 
 Troca só do web server (backend da sessão preservado): build copiado ao pacote global, `kill` no webPid 541573, novo servidor `setsid nohup ... PORT=3000`, `~/.portal.json` `webPid` 541573 → 609206; `:3000` serve `index-gNmNKlqf.js`.
+
+## 30. Tabelas markdown: palavra cortada no meio; agora largura natural + scroll lateral
+
+### 30.1 Sintoma (feedback do usuário)
+
+"Separa uma mesma palavra em diferentes linhas" — em tabelas de muitas colunas, palavras eram fatiadas no meio (ex.: `Tier` → `Ti`/`er`, `Reference=70` em 2 linhas, `maxPeakBrightnessOverride` em 3). O usuário prefere rolar lateralmente a quebrar a palavra.
+
+### 30.2 Causa medida (antes de editar, CDP em sessão real)
+
+Sessão `ses_ee407aa62ffe...` ("Como descobrir brilho máximo do monitor"), mobile 390×844, `.prose` = 316 px:
+
+- CSS forçava colunas de largura igual: `thead`/`tbody` com `display: table; width: 100%; table-layout: fixed` (o hack que compensa o `table { display: block }` do scroll). Na tabela VESA (7 colunas) cada coluna ficava com ~45 px.
+- O `overflow-wrap: anywhere` do §27 (herdado pelas células) **cortava a palavra** quando nem ela cabia nos 45 px: `Tier` (4 letras) em 2 linhas, `maxPeakBrightnessOverride` em 3, `Reference=70` em 2.
+- Como o conteúdo sempre encolhia para caber, a tabela tinha `clientWidth == scrollWidth == 316` — o `overflow-x: auto` existia mas **nunca ativava**. Era essa a "lógica que não deixa deslizar".
+
+### 30.3 Fix
+
+**`apps/web/src/routes/_app/session/$id.tsx`** — override do componente `table` no react-markdown (`markdownComponents`): a tabela agora vem embrulhada num `<div class="prose-table-wrap max-w-full overflow-x-auto">`, devolvendo a ela o `display: table` normal (um único elemento, `thead`/`tbody` alinhados pelo próprio algoritmo da tabela).
+
+**`apps/web/src/main.css`**:
+
+- Removidos `display: block`/`overflow-x: auto`/`max-width` da tabela e os três blocos do hack (`thead`/`tbody` `display: table; table-layout: fixed`, `tr` `display: table-row`). Vale o `table-layout: auto` + `width: 100%` do plugin de tipografia.
+- `th, td { overflow-wrap: normal; word-break: normal; }` — desfaz o `anywhere` herdado do `.prose`: a largura mínima da coluna passa a ser a da maior palavra; quando a soma não cabe, a tabela ultrapassa o container e o wrapper rola.
+- Regras `.prose-table-wrap:first-child/last-child > table` replicam os resets de margem do plugin (o wrapper agora é o filho direto do `.prose`).
+- Parágrafos seguem com `overflow-wrap: anywhere` (§27 preservado).
+
+### 30.4 Verificação (build `index-Cf7jN6xu.js`, CDP com a tabela real)
+
+- **Mobile 390×844**: 0 palavras cortadas no meio em todas as 5 tabelas (antes: `Tier`, `Reference=70`, `maxPeakBrightnessOverride`); 0 células com overflow; alinhamento header/corpo com delta 0 em todas; página sem overflow horizontal (`scrollWidth == innerWidth == 390`).
+- **Rolagem real (touchStart → 10×touchMove → touchEnd)**: tabela VESA `wrapper 316/420` → rolou até 104/104 (fim); outra tabela `316/335` → 19/19. *(O `Input.synthesizeScrollGesture` touch do CDP headless não gera scroll; a sequência `Input.dispatchTouchEvent` gera.)*
+- **Desktop 1280×800**: as 5 tabelas cabem em 806 px, sem scroll, 0 cortes — as colunas passam a ter largura proporcional ao conteúdo (antes eram iguais).
+- **Sintético (§27, mobile)**: célula com path longo em `code` → wrapper 285/829 rolável, token inteiro em 1 linha, 0 overflow de célula; parágrafo com token sem espaços quebra em 3 linhas (comportamento do §27 intacto); página sem overflow.
+- **Hífens** (limitação assumida): palavras com hífen (`tone-mapeia`, `DCI-P3`, `screen-level`) ainda quebram **no hífen** — é uma oportunidade de quebra do CSS (`word-break: normal`), não um corte no meio do token; impedir exigiria `white-space: nowrap` em toda célula (tabela sempre larga, mesmo com frases).
+- `npx tsc --noEmit`: mesmos 3 erros pré-existentes.
+
+### 30.5 Deploy
+
+`bash scripts/deploy.sh` (build + cópia ao pacote global + restart): `:3000` serve `index-Cf7jN6xu.js` (hash validado).

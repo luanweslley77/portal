@@ -257,42 +257,38 @@ body {
 }
 
 /* Markdown prose: tokens sem espaço (code inline, paths, URLs) precisam quebrar
-   dentro da célula/parágrafo em vez de vazar (table-layout: fixed mantém a
-   largura; overflow-wrap é herdado). Blocos <pre> continuam com scroll próprio
-   porque white-space: pre impede a quebra. */
+   dentro do parágrafo em vez de vazar. Tabelas são a exceção: as células mantêm
+   a palavra inteira e o scroll horizontal fica por conta do wrapper
+   .prose-table-wrap (ver markdownComponents em $id.tsx). Blocos <pre> continuam
+   com scroll próprio porque white-space: pre impede a quebra. */
 .prose {
   overflow-wrap: anywhere;
 }
 
-/* Markdown prose table styling */
-.prose table {
-  display: block;
-  overflow-x: auto;
-  max-width: 100%;
-}
-
-.prose thead {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.prose tbody {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.prose tr {
-  display: table-row;
-}
-
+/* Markdown prose table styling.
+   As células desfazem o overflow-wrap: anywhere herdado de .prose: uma palavra
+   nunca é cortada no meio. Como o layout da tabela é automático
+   (table-layout: auto do plugin de tipografia), a largura mínima de cada coluna
+   passa a ser a da maior palavra; quando a soma ultrapassa a largura
+   disponível, o wrapper rola lateralmente em vez de espremer/quebrar as
+   palavras. */
 .prose th,
 .prose td {
-  display: table-cell;
+  overflow-wrap: normal;
+  word-break: normal;
   white-space: normal;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
+}
+
+/* O wrapper assume o lugar da tabela como filho direto do .prose; replica os
+   resets de margem do plugin (primeiro/último filho). */
+.prose .prose-table-wrap:first-child > table {
+  margin-top: 0;
+}
+
+.prose .prose-table-wrap:last-child > table {
+  margin-bottom: 0;
 }
 
 .prose th {

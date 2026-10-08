@@ -8,7 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
-import Markdown from "react-markdown";
+import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Ripples } from "ldrs/react";
 import "ldrs/react/Ripples.css";
@@ -1155,6 +1155,14 @@ const ToolCallItem = memo(function ToolCallItem({
 
 const markdownPlugins = [remarkGfm];
 
+const markdownComponents: Components = {
+  table: ({ node: _node, ...props }) => (
+    <div className="prose-table-wrap max-w-full overflow-x-auto">
+      <table {...props} />
+    </div>
+  ),
+};
+
 const cvSkipLayout = {
   contentVisibility: "auto",
   containIntrinsicSize: "auto 150px",
@@ -1165,7 +1173,11 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({
 }: {
   content: string;
 }) {
-  return <Markdown remarkPlugins={markdownPlugins}>{content}</Markdown>;
+  return (
+    <Markdown remarkPlugins={markdownPlugins} components={markdownComponents}>
+      {content}
+    </Markdown>
+  );
 });
 
 const ReasoningBlock = memo(function ReasoningBlock({
