@@ -25,6 +25,10 @@ import {
   sortSessionMessages,
   type SessionReasoningContent,
 } from "@/hooks/use-session-messages";
+import {
+  gitBranchesKey,
+  isGitDiffKey,
+} from "@/hooks/use-opencode";
 import { backendBasePath, type BackendProvider } from "@/lib/backend-url";
 
 type RuntimeEvent =
@@ -45,10 +49,6 @@ function permissionsKey(port: number, provider?: BackendProvider) {
 
 function questionsKey(port: number, provider?: BackendProvider) {
   return `${backendBasePath(provider, port)}/questions`;
-}
-
-function gitDiffKey(port: number, provider?: BackendProvider) {
-  return `${backendBasePath(provider, port)}/git/diff`;
 }
 
 function currentProjectKey(port: number, provider?: BackendProvider) {
@@ -1366,9 +1366,17 @@ function applyEvent(
       break;
 
     case "session.diff":
-    case "vcs.branch.updated":
-      void mutate(gitDiffKey(port, provider));
+    case "vcs.branch.updated": {
+      void mutate(
+        (key) => isGitDiffKey(key, port, provider),
+        undefined,
+        { revalidate: true },
+      );
+      if (event.type === "vcs.branch.updated") {
+        void mutate(gitBranchesKey(port, provider));
+      }
       break;
+    }
 
     case "project.updated":
       void mutate(currentProjectKey(port, provider));

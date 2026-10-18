@@ -1249,3 +1249,52 @@ Após a parte 1 ainda quebravam palavras com hífen (`tone-mapeia`, `DCI-P3`, `s
 ### 30.6 Deploy
 
 `bash scripts/deploy.sh` (build + cópia ao pacote global + restart). Intermediário (só parte 1): `index-Cf7jN6xu.js`; final: `:3000` serve `index-D20uqzyf.js` (hash validado).
+
+## 31. Comparador de branches na página /diff (sem checkout)
+
+### 31.1 Motivação (pedido do usuário)
+
+"Quero poder comparar branchs por lá [no portal] — ver o git diff de diferentes branchs e comparar branchs entre si, **sem trocar a branch de trabalho atual**." Antes, a página `/diff` só mostrava `git diff HEAD` (working tree vs último commit) — para ver o diff de outra branch era preciso dar checkout nela.
+
+### 31.2 O que foi implementado
+
+- Modo **Branches** ao lado de **Working tree** na página `/diff` (só no provider `opencode`; claude/codex mantêm o comportamento antigo).
+- Dois selects (**base → head**) com todas as branches locais e remotas (`refs/heads` + `refs/remotes`).
+- Dois estilos de comparação:
+  - **Since divergence** = `git diff base...head` (três pontos; só o que a head adiciona desde o ponto de divergência — é o diff que o GitHub mostra em um PR);
+  - **Full diff** = `git diff base head` (dois pontos; diferença completa entre as duas pontas).
+- Linha de meta: `N commits • diverged at <sha>` (contagem via `rev-list` do merge-base até a head).
+- **Read-only por construção**: o servidor só executa `git diff`, `merge-base`, `rev-list`, `for-each-ref` e `branch --show-current` — nenhum comando que altere o repositório (sem checkout/switch/merge).
+
+### 31.3 Servidor (`apps/web/src/server/opencode/[port]/`)
+
+- **`git/diff.ts` (modificado)** — sem query string, comportamento antigo (`git diff HEAD --`); com `?from=X&to=Y&mode=merge|direct`, comparação entre refs. `exec` virou `runGit` (`execFile` com array de argumentos, sem shell; util compartilhado em `server/lib/git.ts`) e refs passam por validação conservadora de refname (rejeita prefixo `-`, espaços e `~^:?*[\`, `..`, `@{`, terminar em `.`/`/`; HTTP 400) — evita injeção de opção (ex.: `--output=/arquivo`). Existência dos refs é verificada (`git rev-parse --verify --quiet`; refs desconhecidos → 400 `Unknown branch or ref: X`). Sem ancestral comum (históricos não relacionados) em modo merge: erro claro `No common ancestor between X and Y. Use Full diff to compare anyway.` em vez do stderr localizado do git (`nenhuma base de merge`). Os comandos de diff levam `--` final (refs ambíguos com pathspec não são re-interpretados como arquivo). Resposta inclui `from`, `to`, `mode`, `mergeBase`, `commits`, `currentBranch`.
+- **`git/branches.ts` (novo)** — `git branch --show-current` + `git for-each-ref` (heads+remotes) separado por TAB → `{ worktree, currentBranch, defaults, branches[] }`, ordenado: branch atual primeiro, depois locais, depois remotas; `defaults.base` = `main` → `origin/main` → `fork/main` → branch padrão real do remoto (`symbolic-ref refs/remotes/origin/HEAD`, cobre `master`/`develop` em outros repos) → primeira local ≠ atual. **Pegadinha medida:** `refs/remotes/fork/HEAD` aparece com nome curto `fork` (o git esconde o `/HEAD`) — o filtro foi feito pelo refname completo, não pelo short.
+- **Eventos (`use-opencode-events.ts`)** — `vcs.branch.updated` invalida as branches e todas as variantes do diff (filtro de prefixo cobre as URLs com query); `session.diff` invalida só os diffs (mantém o badge da sidebar correto durante edições do agente).
+- **Hooks (`use-opencode.ts`)** — `useGitDiff(params?)`, `useGitBranches(enabled)` e `useBackend` exportado com `provider`; o fetcher compartilhado agora propaga a mensagem de erro do servidor (`body.message`) a todos os hooks.
+- **Revisão pré-commit (OCR)** — 11 achados: 10 corrigidos (fetcher único, tipo `GitDiffMode`/`DEFAULT_GIT_DIFF_MODE`, verificação de existência dos refs, fallback `origin/HEAD` do base default, `--` nos diffs, guard de `mode` repetido na query, `runGit` compartilhado, `BranchSelect` extraído, guard de `compareReady` vazio, `rev-list` em paralelo com o diff); 1 deixado consciente (unificar o `useBackend` exportado com as cópias locais em `use-commands.ts`/`use-session-messages.ts` mudaria a semântica de `provider: undefined` desses hooks — fora do escopo).
+- **Revisão pré-commit (OCR, 2ª rodada)** — 8 achados, todos corrigidos: default não-degenerado (na branch padrão, o head não vira ela mesma — evita `main...main` vazio), overrides reconciliados com a lista de branches (branch apagada não vira erro 400 de ref desconhecido), gate de `data.from` no modo branches (não mostra o diff do working tree durante a troca de modo), `getResponseErrorMessage` do app reutilizado no fetcher (helper canônico em `lib/error-message.ts`), chaves de cache e filtro de invalidação centralizados (`gitDiffKey`/`gitBranchesKey`/`isGitDiffKey` exportados de `use-opencode.ts`), painel de branches gateado por `supportsBranches` + reset do modo quando o provider muda, ternário aninhado extraído (`renderBranchControls`), `CompareStyle` = `GitDiffMode` compartilhado.
+- **Revisão pré-commit (OCR, 3ª rodada)** — 9 achados: 8 corrigidos (`runGitOrEmpty` no lib compartilhado; sem `as GitBranchInfo` — defaults na desestruturação; fetch do project dentro do `try` nos dois endpoints (HTTPError re-lançado, erro genérico vira 500 embrulhado); optional chaining em `defaults?.base`/`branches?.find` (payload parcial não crasha a página); guarda simétrica worktree↔branches no `renderContent` (payload de uma aba nunca aparece na outra); `--no-ext-diff --no-color` nos diffs (config global `diff.external`/`color.ui` do git não quebra o parse); `encoding: "utf-8"` explícito no `runGit`); 1 mantido consciente (eco do ref em `Unknown branch or ref: X` — útil para o usuário e não explorável: resposta JSON + React escapa o texto).
+
+### 31.4 Página (`apps/web/src/routes/_app/diff.tsx`)
+
+- Segmented **Working tree | Branches** (oculto para providers ≠ opencode).
+- Mobile 390 px: selects empilhados em largura cheia; ≥640 px: lado a lado (`base: → head:`), 407 px cada.
+- Meta + botões de estilo com `flex-wrap`: no mobile os botões descem para a linha de baixo quando falta espaço — o sha do merge-base nunca é truncado.
+- Enquanto não há resposta de comparação, mostra `Read-only — working branch stays <atual>` — a promessa do pedido explícita na própria UI.
+
+### 31.5 Verificação (evidências)
+
+- **Byte a byte contra o CLI**: sha256 idêntico nos 4 casos (merge e direct) em 2 pares — `main...feat/thinking-command` e `fork/feat/isolated-containers...fork/feat/sdk-update-and-improvements`.
+- **UI (mobile 390×844, teclado real via CDP)**: default `base=main, head=feat/thinking-command` → **49 arquivos** (nomes e ordem idênticos ao CLI, lidos dos shadow roots do `@pierre/diffs`); troca do head para `fix/basic-auth-support` → **2 arquivos** (CLI: 2) e meta `1 commit • diverged at 1349615`.
+- **Par divergente real** (`fork/feat/isolated-containers` × `fork/feat/sdk-update-and-improvements`, merge-base `eb5f235` que não é ponta): merge **26** arquivos × direct **16** (CLI: 26×16), meta `11 commits • diverged at eb5f235`.
+- **Históricos não relacionados** (`main` × `fork/hosenur/model-thinking-levels`): merge → erro amigável com Retry (400 na rede, mensagem "No common ancestor…"); Full diff → **vazio** (árvores iguais) → `No changes between main and …`.
+- **Working tree intacto**: modo antigo mostra os mesmos 4 arquivos de `git diff HEAD`; badge da sidebar `Diff 4`.
+- **Refresh** revalida diff e branches (2 requests na rede).
+- **Desktop 1280×800**: selects lado a lado, meta em 1 linha, 0 overflow horizontal (`scrollWidth == innerWidth`).
+- **A branch de trabalho nunca mudou** — o ponto central do pedido: `git branch --show-current` = `feat/thinking-command` durante toda a validação e `git reflog` sem eventos de checkout.
+- `npx tsc --noEmit`: apenas os 3 erros pré-existentes.
+
+### 31.6 Deploy
+
+`bash scripts/deploy.sh` — `:3000` serve `index-6BcnBqdN.js` (hash validado).

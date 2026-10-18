@@ -1,21 +1,29 @@
 import useSWR from "swr";
 import { useInstanceStore } from "@/stores/instance-store";
-import { backendBasePath } from "@/lib/backend-url";
+import {
+  backendBasePath,
+  normalizeProvider,
+  type BackendProvider,
+} from "@/lib/backend-url";
+import { getResponseErrorMessage } from "@/lib/error-message";
 import type { SessionStatus } from "@opencode-ai/sdk/v2";
 
 const fetcher = async (url: string) => {
   const res = await fetch(url);
   if (!res.ok) {
-    throw new Error(`Request failed: ${res.status}`);
+    throw new Error(
+      await getResponseErrorMessage(res, `Request failed: ${res.status}`),
+    );
   }
   return res.json();
 };
 
-function useBackend() {
+export function useBackend() {
   const instance = useInstanceStore((s) => s.instance);
   return instance
     ? {
         port: instance.port,
+        provider: normalizeProvider(instance.provider),
         basePath: backendBasePath(instance.provider, instance.port),
       }
     : null;
@@ -207,12 +215,86 @@ export function useDeleteSession() {
   };
 }
 
-export function useGitDiff() {
+export type GitDiffMode = "merge" | "direct";
+
+export const DEFAULT_GIT_DIFF_MODE: GitDiffMode = "merge";
+
+export function gitDiffKey(port: number, provider?: BackendProvider) {
+  return `${backendBasePath(provider, port)}/git/diff`;
+}
+
+export function gitBranchesKey(port: number, provider?: BackendProvider) {
+  return `${backendBasePath(provider, port)}/git/branches`;
+}
+
+export function isGitDiffKey(
+  key: unknown,
+  port: number,
+  provider?: BackendProvider,
+) {
+  if (typeof key !== "string") return false;
+  const base = gitDiffKey(port, provider);
+  return key === base || key.startsWith(`${base}?`);
+}
+
+export interface GitDiffParams {
+  from: string;
+  to: string;
+  mode?: GitDiffMode;
+}
+
+export interface GitDiffResponse {
+  diff: string;
+  worktree: string;
+  from?: string;
+  to?: string;
+  mode?: GitDiffMode;
+  mergeBase?: string;
+  commits?: number;
+  currentBranch?: string;
+}
+
+export function useGitDiff(params?: GitDiffParams | null) {
+  const backend = useBackend();
+  const query = params
+    ? `?${new URLSearchParams({
+        from: params.from,
+        to: params.to,
+        mode: params.mode ?? DEFAULT_GIT_DIFF_MODE,
+      })}`
+    : "";
+
+  return useSWR<GitDiffResponse>(
+    backend ? `${gitDiffKey(backend.port, backend.provider)}${query}` : null,
+    fetcher,
+    { keepPreviousData: true },
+  );
+}
+
+export interface GitBranchInfo {
+  name: string;
+  kind: "local" | "remote";
+  sha: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitBranchesResponse {
+  worktree: string;
+  currentBranch: string;
+  defaults: { base: string };
+  branches: GitBranchInfo[];
+}
+
+export function useGitBranches(enabled = true) {
   const backend = useBackend();
 
-  return useSWR<{ diff: string; worktree: string }>(
-    backend ? `${backend.basePath}/git/diff` : null,
+  return useSWR<GitBranchesResponse>(
+    backend && enabled
+      ? gitBranchesKey(backend.port, backend.provider)
+      : null,
     fetcher,
+    { keepPreviousData: true, revalidateOnFocus: false },
   );
 }
 
