@@ -1298,3 +1298,38 @@ Após a parte 1 ainda quebravam palavras com hífen (`tone-mapeia`, `DCI-P3`, `s
 ### 31.6 Deploy
 
 `bash scripts/deploy.sh` — `:3000` serve `index-6BcnBqdN.js` (hash validado).
+
+## 32. Working tree selecionável na comparação de branches (sem checkout)
+
+### 32.1 Motivação (pedido do usuário)
+
+"Quero poder ver o conteúdo não commitado — o diff da working tree — selecionando-a, sem trocar a branch ativa." O modo Branches comparava só commits entre refs; a working tree (com o não commitado) tinha aba própria, mas não era selecionável dentro da comparação.
+
+### 32.2 Uso
+
+- No select **head**, a opção **"Working tree"** (primeira da lista):
+  - `base = main` → Working tree: tudo que o estado atual (commits + não commitado) difere da main;
+  - `base = branch atual` → Working tree: exatamente o não commitado (`git diff HEAD`), com meta `0 commits • diverged at <HEAD>`;
+  - "Since divergence" = `mb(from, HEAD)` → working tree; "Full diff" = `from` → working tree.
+- Somente leitura: `git diff`/`merge-base`/`rev-list` — a branch ativa não muda (o porquê de a opção existir).
+
+### 32.3 Implementação
+
+- **Servidor (`git/diff.ts`)** — sentinela `GIT_WORKTREE_REF = "Working tree"` **em módulo compartilhado** (`lib/git-refs.ts`, importado por servidor e cliente — achado da revisão: cópias separadas poderiam dessincronizar em silêncio; import via alias `@/lib/git-refs`, convenção dos handlers do servidor). Tem espaço, então é impossível ser um refname git: não colide com nome de branch. Com `to="Working tree"`: `from` segue validado como ref; `headRef = "HEAD"` (validado por `rev-parse` como qualquer ref); merge → `git diff $(git merge-base from HEAD) --` (divergência + não commitado), direct → `git diff from --`; `commits` = `rev-list --count mergeBase..HEAD` (parte commitada — o não commitado aparece no diff).
+- **Cliente (`lib/git-refs.ts`/`hooks/use-opencode.ts`/`diff.tsx`)** — `GIT_WORKTREE_REF` importado do módulo compartilhado; opção prependada só no select head; override validado contra a lista (aceita o sentinela).
+
+### 32.4 Verificação
+
+- **Bytes** — sha256 idêntico ao CLI em 4 casos (com uma mudança não commitada real criada para o teste e depois revertida via `git restore`): aba worktree (`git diff HEAD`), `main→Working tree` merge (`git diff 1349615`), `main→Working tree` direct (`git diff main`), `branch atual→Working tree` (= `git diff HEAD`).
+- **UI (desktop e mobile 390×844)** — "Working tree" no head; `main→Working tree` = **53** arquivos com a edição temporária / **52** depois de revertida (CLI: 53/52); `branch atual→Working tree` = **4→3** arquivos = `git status`; meta `0 commits • diverged at 786706f`; request `to=Working+tree` (medido antes: h3 decodifica `+` como espaço); 0 overflow horizontal.
+- **Erros** — sentinela como base → 400; ref com espaço → 400; base desconhecida → 400; sem ancestral comum + Working tree → 400 amigável (direct: 200).
+- **Branch ativa intacta** — `git branch --show-current` = `fix/mobile-content-clipping` e reflog sem checkout durante todo o uso.
+
+### 32.5 Deploy
+
+`bash scripts/deploy.sh` — `:3000` serve `index-RX5jctaU.js` (hash validado).
+
+### 32.6 Revisões OCR (2 rodadas, 4 achados, todos aplicados)
+
+- 1ª rodada: sentinela duplicada cliente/servidor → extraída para `lib/git-refs.ts` compartilhado; ternário redundante no retorno (`to`).
+- 2ª rodada: import relativo profundo → alias `@/lib/git-refs` (consistência com os demais handlers); `rev-parse` do head usando `headRef` direto (sem `Promise.resolve(null)` + `?.` — valida o HEAD também e mantém o bloco uniforme).

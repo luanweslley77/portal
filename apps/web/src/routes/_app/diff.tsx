@@ -11,12 +11,15 @@ import {
   SelectTrigger,
 } from "@/components/ui/select";
 import {
-  DEFAULT_GIT_DIFF_MODE,
   useBackend,
   useGitBranches,
   useGitDiff,
-  type GitDiffMode,
 } from "@/hooks/use-opencode";
+import {
+  DEFAULT_GIT_DIFF_MODE,
+  GIT_WORKTREE_REF,
+  type GitDiffMode,
+} from "@/lib/git-refs";
 import { useBreadcrumb } from "@/contexts/breadcrumb-context";
 import {
   ArrowPathIcon,
@@ -89,12 +92,20 @@ function DiffPage() {
     [branchData?.branches],
   );
 
+  const headNames = useMemo(
+    () => [GIT_WORKTREE_REF, ...branchNames],
+    [branchNames],
+  );
+
   const baseOverrideValid =
     baseOverride && (!branchData || branchNames.includes(baseOverride))
       ? baseOverride
       : null;
   const headOverrideValid =
-    headOverride && (!branchData || branchNames.includes(headOverride))
+    headOverride &&
+    (!branchData ||
+      headOverride === GIT_WORKTREE_REF ||
+      branchNames.includes(headOverride))
       ? headOverride
       : null;
 
@@ -258,7 +269,7 @@ function DiffPage() {
             label="Head branch"
             prefix="head:"
             value={head}
-            names={branchNames}
+            names={headNames}
             onChange={setHeadOverride}
           />
         </div>

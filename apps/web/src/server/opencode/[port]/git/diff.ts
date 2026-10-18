@@ -2,6 +2,7 @@ import { defineHandler, getQuery, HTTPError } from "nitro/h3";
 import { getOpencodeClient } from "../../../lib/opencode-client";
 import { runGit, runGitOrEmpty } from "../../../lib/git";
 import { parsePort } from "../../../lib/validation";
+import { GIT_WORKTREE_REF } from "@/lib/git-refs";
 
 const INVALID_REF_CHARS = /[\s~^:?*[\\\x00-\x1f]/;
 
@@ -44,14 +45,23 @@ export default defineHandler(async (event) => {
       return { diff: stdout, worktree };
     }
 
-    if (!from || !to || !isValidRef(from) || !isValidRef(to)) {
+    const toIsWorktree = to === GIT_WORKTREE_REF;
+
+    if (
+      !from ||
+      !isValidRef(from) ||
+      !to ||
+      (!toIsWorktree && !isValidRef(to))
+    ) {
       throw new HTTPError("Invalid ref for branch comparison", { status: 400 });
     }
+
+    const headRef = toIsWorktree ? "HEAD" : to;
 
     const [currentResult, fromRef, toRef] = await Promise.all([
       runGitOrEmpty(worktree, ["branch", "--show-current"]),
       runGitOrEmpty(worktree, ["rev-parse", "--verify", "--quiet", from]),
-      runGitOrEmpty(worktree, ["rev-parse", "--verify", "--quiet", to]),
+      runGitOrEmpty(worktree, ["rev-parse", "--verify", "--quiet", headRef]),
     ]);
 
     if (!fromRef.stdout.trim()) {
@@ -64,7 +74,7 @@ export default defineHandler(async (event) => {
     const mergeBaseResult = await runGitOrEmpty(worktree, [
       "merge-base",
       from,
-      to,
+      headRef,
     ]);
     const mergeBase = mergeBaseResult.stdout.trim();
 
@@ -75,18 +85,25 @@ export default defineHandler(async (event) => {
       );
     }
 
-    const [diffResult, countResult] = await Promise.all([
-      runGit(worktree, [
+    let diffArgs: string[];
+    if (toIsWorktree) {
+      diffArgs = ["diff", ...DIFF_FLAGS, direct ? from : mergeBase, "--"];
+    } else {
+      diffArgs = [
         "diff",
         ...DIFF_FLAGS,
-        ...(direct ? [from, to] : [`${from}...${to}`]),
+        direct ? from : `${from}...${to}`,
         "--",
-      ]),
+      ];
+    }
+
+    const [diffResult, countResult] = await Promise.all([
+      runGit(worktree, diffArgs),
       mergeBase
         ? runGitOrEmpty(worktree, [
             "rev-list",
             "--count",
-            `${mergeBase}..${to}`,
+            `${mergeBase}..${headRef}`,
           ])
         : Promise.resolve(null),
     ]);

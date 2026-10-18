@@ -6,6 +6,10 @@ import {
   type BackendProvider,
 } from "@/lib/backend-url";
 import { getResponseErrorMessage } from "@/lib/error-message";
+import {
+  DEFAULT_GIT_DIFF_MODE,
+  type GitDiffMode,
+} from "@/lib/git-refs";
 import type { SessionStatus } from "@opencode-ai/sdk/v2";
 
 const fetcher = async (url: string) => {
@@ -214,10 +218,6 @@ export function useDeleteSession() {
     return res.json();
   };
 }
-
-export type GitDiffMode = "merge" | "direct";
-
-export const DEFAULT_GIT_DIFF_MODE: GitDiffMode = "merge";
 
 export function gitDiffKey(port: number, provider?: BackendProvider) {
   return `${backendBasePath(provider, port)}/git/diff`;
