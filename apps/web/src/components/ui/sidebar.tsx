@@ -35,7 +35,7 @@ import { Button } from "./button";
 import { Link } from "./link";
 import { Tooltip, TooltipContent } from "./tooltip";
 
-const SIDEBAR_WIDTH = "22rem";
+const SIDEBAR_WIDTH = "24rem";
 const SIDEBAR_WIDTH_DOCK = "3.25rem";
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;

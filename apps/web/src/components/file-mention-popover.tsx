@@ -130,24 +130,42 @@ export function FileMentionPopover({
 
   useEffect(() => {
     if (isOpen && mentionStart !== null && textareaRef.current) {
-      const coords = getCaretCoordinates(textareaRef.current, mentionStart);
+      const compute = () => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        const coords = getCaretCoordinates(ta, mentionStart);
 
-      if (
-        coords.top <= 0 ||
-        coords.left < 0 ||
-        !Number.isFinite(coords.top) ||
-        !Number.isFinite(coords.left)
-      ) {
-        const rect = textareaRef.current.getBoundingClientRect();
-        setPosition({
-          top: rect.top,
-          left: Math.max(16, rect.left),
-        });
-      } else {
-        setPosition(coords);
-      }
+        if (
+          coords.top <= 0 ||
+          coords.left < 0 ||
+          !Number.isFinite(coords.top) ||
+          !Number.isFinite(coords.left)
+        ) {
+          const rect = ta.getBoundingClientRect();
+          setPosition({
+            top: rect.top,
+            left: Math.max(16, rect.left),
+          });
+        } else {
+          setPosition(coords);
+        }
+      };
+
+      compute();
+      const visualViewport = window.visualViewport;
+      window.addEventListener("resize", compute);
+      visualViewport?.addEventListener("resize", compute);
+      visualViewport?.addEventListener("scroll", compute);
+      document.addEventListener("scroll", compute, true);
+      return () => {
+        window.removeEventListener("resize", compute);
+        visualViewport?.removeEventListener("resize", compute);
+        visualViewport?.removeEventListener("scroll", compute);
+        document.removeEventListener("scroll", compute, true);
+      };
     } else {
       setPosition(null);
+      return;
     }
   }, [isOpen, mentionStart, textareaRef]);
 
