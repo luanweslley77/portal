@@ -381,11 +381,24 @@ function DiffPage() {
   useEffect(() => {
     if (!focusMode) return;
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !treeSheetOpen) setFocusMode(false);
+      if (event.key === "Escape" && !treeSheetOpen) void handleExitFocus();
+    }
+    function handleFullscreenChange() {
+      if (!document.fullscreenElement) setFocusMode(false);
     }
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
   }, [focusMode, treeSheetOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (document.fullscreenElement) void document.exitFullscreen();
+    };
+  }, []);
 
   const meta = useMemo(() => {
     if (!data?.from) return "";
@@ -406,9 +419,21 @@ function DiffPage() {
     }
   }
 
-  function handleEnterFocus() {
+  async function handleEnterFocus() {
     setTreeSheetOpen(false);
     setFocusMode(true);
+    if (document.fullscreenElement || !document.fullscreenEnabled) return;
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch {}
+  }
+
+  async function handleExitFocus() {
+    setFocusMode(false);
+    if (!document.fullscreenElement) return;
+    try {
+      await document.exitFullscreen();
+    } catch {}
   }
 
   function handleToggleTree() {
@@ -792,7 +817,7 @@ function DiffPage() {
           <Button
             intent="secondary"
             size="sm"
-            onPress={() => setFocusMode(false)}
+            onPress={() => void handleExitFocus()}
             aria-label="Exit focus mode"
             className="shadow-lg"
           >
