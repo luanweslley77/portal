@@ -1333,3 +1333,30 @@ Após a parte 1 ainda quebravam palavras com hífen (`tone-mapeia`, `DCI-P3`, `s
 
 - 1ª rodada: sentinela duplicada cliente/servidor → extraída para `lib/git-refs.ts` compartilhado; ternário redundante no retorno (`to`).
 - 2ª rodada: import relativo profundo → alias `@/lib/git-refs` (consistência com os demais handlers); `rev-parse` do head usando `headRef` direto (sem `Promise.resolve(null)` + `?.` — valida o HEAD também e mantém o bloco uniforme).
+
+## 33. Texto das mensagens maior e mais largura útil no mobile
+
+### 33.1 Sintoma (feedback do usuário)
+
+"o texto exibido esta muito pequeno o que faz isso aocntecer creio que seja nao aproveitar lateralmente a tela, quero resolver isso" / "estou mais preocupado com o layout mobile" / "suspeito que o que cause mais impacto atualmente seja esses ícones que representam o assistente e o usuário".
+
+### 33.2 Causa (medida antes de editar, CDP em 390×844)
+
+- O corpo das mensagens usava `prose-sm` → **14px**, embora o `textarea` do composer use `text-base` (16px) no mobile. O texto da conversa era o menor texto "de leitura" da tela.
+- A linha de mensagem usava `px-6` (24px de cada lado) **mais** a coluna do avatar (ícone de 16px + `gap-2` = 24px): o texto começava em x=49 e terminava em x=365 → **316px úteis** (81% da tela). Não havia `max-width`; o espaço "perdido" era padding + gutter do ícone.
+- O avatar de 16px ocupava a mesma coluna de 24px em todas as mensagens, apesar de não ser conteúdo.
+
+### 33.3 Fix (`apps/web/src/routes/_app/session/$id.tsx`)
+
+- `prose-sm` condicionado ao breakpoint: `prose ... sm:prose-sm` → **16px no mobile**, 14px a partir de ≥640px (desktop mantém exatamente o tamanho anterior). Aplicado ao texto das mensagens e ao corpo do reasoning.
+- Linhas de mensagem/tool/permissões/estado (reverted, unlinked, sending): `px-3 sm:px-6` → 12px no mobile, 24px no desktop.
+- Avatares (sparkle do assistente / ícone do usuário): `hidden ... sm:block` → não reservam coluna no mobile; continuam visíveis no desktop. A distinção de papel no mobile fica pela cor (`text-muted-fg` no usuário) e pelos cards de ferramenta.
+- As mensagens agora alinham com o composer (que já usava `p-3` = 12px).
+
+### 33.4 Verificação (build `index-eZhYsyiK.js` em `:3000`)
+
+- **Mobile 390×844**: `prose` 16px/28px (antes 14px/24px); mensagem do assistente com **364px** de largura (antes 316), começando em x=13; mensagem do usuário com 333px (o botão de undo ocupa ~31px à direita); avatares `display: none`; `scrollWidth == innerWidth` (sem overflow horizontal).
+- **Desktop 1280×800**: `prose` 14px e avatares visíveis, sem regressão visual (glyph 16px; texto começa após a coluna do avatar).
+- **Breakpoint**: o CSS compilado gera `.sm\:prose-sm` dentro de `@media (width>=40rem)` — os 14px valem só a partir de 640px, inclusive as regras-filhas (parágrafos, headings, código).
+- `npx tsc --noEmit`: apenas os 3 erros pré-existentes.
+- `bash scripts/deploy.sh`: `:3000` serve `index-eZhYsyiK.js` (hash validado).

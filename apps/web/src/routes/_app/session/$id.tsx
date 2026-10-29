@@ -1299,7 +1299,7 @@ const ReasoningBlock = memo(function ReasoningBlock({
           data-reasoning-body
           className="border-t border-border/60 px-2.5 py-2"
         >
-          <div className="prose prose-sm dark:prose-invert max-w-none opacity-75">
+          <div className="prose dark:prose-invert max-w-none opacity-75 sm:prose-sm">
             <MemoizedMarkdown content={content} />
           </div>
         </div>
@@ -1354,12 +1354,15 @@ const MessageItem = memo(function MessageItem({
   return (
     <>
       {hasMainContent && (
-        <div className="py-3 px-6" style={cvSkipLayout}>
+        <div className="py-3 px-3 sm:px-6" style={cvSkipLayout}>
           <div className="flex gap-2">
             {isAssistant ? (
-              <IconBadgeSparkle size="16px" className="shrink-0 mt-1" />
+              <IconBadgeSparkle
+                size="16px"
+                className="mt-1 hidden shrink-0 sm:block"
+              />
             ) : (
-              <IconUser size="16px" className="shrink-0 mt-1" />
+              <IconUser size="16px" className="mt-1 hidden shrink-0 sm:block" />
             )}
             <div className="flex-1 min-w-0">
               {!isAssistant && message.isQueued && (
@@ -1375,7 +1378,7 @@ const MessageItem = memo(function MessageItem({
                 />
               ))}
               <div
-                className={`prose prose-sm dark:prose-invert max-w-none overflow-x-hidden ${!isAssistant ? "text-muted-fg" : ""}`}
+                className={`prose dark:prose-invert max-w-none overflow-x-hidden sm:prose-sm ${!isAssistant ? "text-muted-fg" : ""}`}
               >
                 {textContent && <MemoizedMarkdown content={textContent} />}
               </div>
@@ -1402,7 +1405,7 @@ const MessageItem = memo(function MessageItem({
         </div>
       )}
       {toolCalls.length > 0 && (
-        <div className="py-3 px-6" style={cvSkipLayout}>
+        <div className="py-3 px-3 sm:px-6" style={cvSkipLayout}>
           <div className="space-y-1">
             {toolCalls.map((part) => (
               <ToolCallItem
@@ -1421,7 +1424,7 @@ const MessageItem = memo(function MessageItem({
         </div>
       )}
       {messagePermissions.length > 0 && (
-        <div className="py-3 px-6" style={cvSkipLayout}>
+        <div className="py-3 px-3 sm:px-6" style={cvSkipLayout}>
           <div className="space-y-2">
             {messagePermissions.map((permission) => (
               <PermissionRequestForm
@@ -2579,7 +2582,7 @@ function SessionPage() {
         <div className="divide-y divide-dashed divide-border overflow-x-hidden">
           {messageNodes}
           {revertedMessages.length > 0 && (
-            <div className="flex items-center justify-between gap-3 px-6 py-4">
+            <div className="flex items-center justify-between gap-3 px-3 py-4 sm:px-6">
               <span className="text-sm text-muted-fg">
                 {revertedMessages.length}{" "}
                 {revertedMessages.length === 1 ? "message" : "messages"}{" "}
@@ -2597,7 +2600,7 @@ function SessionPage() {
             </div>
           )}
           {unlinkedPermissions.length > 0 && (
-            <div className="px-6 py-4 space-y-2 border-t border-dashed border-border">
+            <div className="px-3 py-4 space-y-2 border-t border-dashed border-border sm:px-6">
               {unlinkedPermissions.map((permission) => (
                 <PermissionRequestForm
                   key={permission.id}
@@ -2613,7 +2616,7 @@ function SessionPage() {
         </div>
 
         {sending && (
-          <div className="py-3 px-6">
+          <div className="py-3 px-3 sm:px-6">
             <div className="flex items-center gap-2">
               <Ripples size="30" speed="2" color="var(--color-primary)" />
               <span className="text-sm text-muted-fg">Thinking...</span>
