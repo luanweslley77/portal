@@ -256,36 +256,47 @@ body {
   }
 }
 
-/* Markdown prose table styling */
-.prose table {
-  display: block;
-  overflow-x: auto;
-  white-space: nowrap;
-  max-width: 100%;
+/* Markdown prose: tokens sem espaço (code inline, paths, URLs) precisam quebrar
+   dentro do parágrafo em vez de vazar. Tabelas são a exceção: as células mantêm
+   a palavra inteira e o scroll horizontal fica por conta do wrapper
+   .prose-table-wrap (ver markdownComponents em $id.tsx). Blocos <pre> continuam
+   com scroll próprio porque white-space: pre impede a quebra. */
+.prose {
+  overflow-wrap: anywhere;
 }
 
-.prose thead {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.prose tbody {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-}
-
-.prose tr {
-  display: table-row;
-}
-
+/* Markdown prose table styling.
+   As células desfazem o overflow-wrap: anywhere herdado de .prose: uma palavra
+   nunca é cortada no meio. Como o layout da tabela é automático
+   (table-layout: auto do plugin de tipografia), a largura mínima de cada coluna
+   passa a ser a da maior palavra; quando a soma ultrapassa a largura
+   disponível, o wrapper rola lateralmente em vez de espremer/quebrar as
+   palavras. */
 .prose th,
 .prose td {
-  display: table-cell;
+  overflow-wrap: normal;
+  word-break: normal;
   white-space: normal;
   padding: 0.5rem 0.75rem;
   border: 1px solid var(--border);
+}
+
+/* Cada palavra das células vira um span (rehype-keep-words): o nowrap impede
+   também a quebra em hífens (ex.: "tone-mapeia", "DCI-P3", "--foo-bar"), sem
+   bloquear a quebra entre palavras — os espaços ficam fora dos spans. */
+.prose td .prose-word,
+.prose th .prose-word {
+  white-space: nowrap;
+}
+
+/* O wrapper assume o lugar da tabela como filho direto do .prose; replica os
+   resets de margem do plugin (primeiro/último filho). */
+.prose .prose-table-wrap:first-child > table {
+  margin-top: 0;
+}
+
+.prose .prose-table-wrap:last-child > table {
+  margin-bottom: 0;
 }
 
 .prose th {
@@ -314,64 +325,4 @@ body {
   }
 }
 
-/* react-diff-view theme overrides */
-.diff-line {
-  font-family: var(--font-mono, "Geist Mono Variable", monospace);
-  font-size: 0.75rem;
-  line-height: 1.5;
-}
 
-.diff-gutter {
-  width: 3rem;
-  min-width: 3rem;
-  padding: 0 0.5rem;
-  text-align: right;
-  color: var(--muted-fg);
-  user-select: none;
-}
-
-.diff-code {
-  padding: 0 0.75rem;
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-
-.diff-gutter-insert {
-  background-color: oklch(0.596 0.145 163.225 / 0.15);
-}
-
-.diff-code-insert {
-  background-color: oklch(0.596 0.145 163.225 / 0.1);
-}
-
-.diff-gutter-delete {
-  background-color: oklch(0.577 0.245 27.325 / 0.15);
-}
-
-.diff-code-delete {
-  background-color: oklch(0.577 0.245 27.325 / 0.1);
-}
-
-.diff-hunk-header {
-  background-color: var(--muted);
-  color: var(--muted-fg);
-  padding: 0.25rem 0.75rem;
-  font-family: var(--font-mono, "Geist Mono Variable", monospace);
-  font-size: 0.75rem;
-}
-
-.dark .diff-gutter-insert {
-  background-color: oklch(0.596 0.145 163.225 / 0.2);
-}
-
-.dark .diff-code-insert {
-  background-color: oklch(0.596 0.145 163.225 / 0.1);
-}
-
-.dark .diff-gutter-delete {
-  background-color: oklch(0.577 0.245 27.325 / 0.2);
-}
-
-.dark .diff-code-delete {
-  background-color: oklch(0.577 0.245 27.325 / 0.1);
-}

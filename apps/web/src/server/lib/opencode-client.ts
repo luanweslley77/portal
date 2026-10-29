@@ -35,6 +35,17 @@ export function getOpencodeBaseUrl(port: number) {
   return `http://${hostname}:${port}`;
 }
 
+function getAuthHeaders(): Record<string, string> | undefined {
+  const username = process.env.OPENCODE_SERVER_USERNAME;
+  const password = process.env.OPENCODE_SERVER_PASSWORD;
+  if (username && password) {
+    return {
+      Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`,
+    };
+  }
+  return undefined;
+}
+
 export function getOpencodeClient(port: number) {
   const baseUrl = getOpencodeBaseUrl(port);
 
@@ -43,8 +54,10 @@ export function getOpencodeClient(port: number) {
     return cached;
   }
 
+  const authHeaders = getAuthHeaders();
   const client = createOpencodeClient({
     baseUrl,
+    ...(authHeaders ? { headers: authHeaders } : {}),
   });
 
   clientCache.set(baseUrl, client);
