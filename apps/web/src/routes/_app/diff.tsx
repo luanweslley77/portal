@@ -37,6 +37,8 @@ import {
   FolderIcon,
   IconGitBranch,
   ListTreeIcon,
+  Maximize2Icon,
+  Minimize2Icon,
 } from "@/components/icons/lucide";
 
 export const Route = createFileRoute("/_app/diff")({
@@ -301,6 +303,7 @@ function DiffPage() {
     new Set(),
   );
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
+  const [focusMode, setFocusMode] = useState(false);
 
   const { isMobile, isTablet } = useMediaQuery();
   const usesTreeSheet = isMobile || isTablet;
@@ -375,6 +378,15 @@ function DiffPage() {
     setActiveFileIndex(null);
   }, [files]);
 
+  useEffect(() => {
+    if (!focusMode) return;
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !treeSheetOpen) setFocusMode(false);
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusMode, treeSheetOpen]);
+
   const meta = useMemo(() => {
     if (!data?.from) return "";
     const parts: string[] = [];
@@ -392,6 +404,11 @@ function DiffPage() {
     if (mode === "branches") {
       void branchesQuery.mutate();
     }
+  }
+
+  function handleEnterFocus() {
+    setTreeSheetOpen(false);
+    setFocusMode(true);
   }
 
   function handleToggleTree() {
@@ -580,8 +597,20 @@ function DiffPage() {
   }
 
   return (
-    <div className="-m-4 flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+    <div
+      data-focus-mode={focusMode ? "true" : undefined}
+      className={
+        focusMode
+          ? "fixed inset-0 z-50 flex h-full flex-col bg-bg"
+          : "-m-4 flex h-full flex-col"
+      }
+    >
+      <div
+        className={twMerge(
+          "flex items-center justify-between gap-2 border-b border-border px-4 py-3",
+          focusMode && "hidden",
+        )}
+      >
         <h1 className="text-lg font-semibold">Git Diff</h1>
         <div className="flex items-center gap-1.5">
           <Button
@@ -599,6 +628,15 @@ function DiffPage() {
               <span className="text-xs text-muted-fg">{files.length}</span>
             )}
           </Button>
+          <Button
+            intent="plain"
+            size="sm"
+            onPress={handleEnterFocus}
+            aria-label="Enter focus mode"
+          >
+            <Maximize2Icon className="size-4" />
+            <span className="hidden sm:inline">Focus</span>
+          </Button>
           <Button intent="secondary" size="sm" onPress={handleRefresh}>
             <ArrowPathIcon className="size-4" />
             Refresh
@@ -607,7 +645,12 @@ function DiffPage() {
       </div>
 
       {supportsBranches && (
-        <div className="flex items-center gap-1.5 border-b border-border px-4 py-2">
+        <div
+          className={twMerge(
+            "flex items-center gap-1.5 border-b border-border px-4 py-2",
+            focusMode && "hidden",
+          )}
+        >
           <Button
             size="sm"
             intent={mode === "worktree" ? "secondary" : "plain"}
@@ -656,7 +699,12 @@ function DiffPage() {
       )}
 
       {supportsBranches && mode === "branches" && !controlsOpen && (
-        <div className="flex items-center gap-2 border-b border-border px-4 py-1.5 sm:hidden">
+        <div
+          className={twMerge(
+            "flex items-center gap-2 border-b border-border px-4 py-1.5 sm:hidden",
+            focusMode && "hidden",
+          )}
+        >
           <span className="min-w-0 flex-1 truncate text-xs text-muted-fg">
             {base || "…"} → {head || "…"}
           </span>
@@ -669,7 +717,10 @@ function DiffPage() {
       {supportsBranches && mode === "branches" && controlsOpen && (
         <div
           data-slot="diff-branch-controls"
-          className="space-y-2 border-b border-border px-4 py-3"
+          className={twMerge(
+            "space-y-2 border-b border-border px-4 py-3",
+            focusMode && "hidden",
+          )}
         >
           {renderBranchControls()}
         </div>
@@ -719,6 +770,37 @@ function DiffPage() {
           </SheetBody>
         </SheetContent>
       </Sheet>
+
+      {focusMode && (
+        <div className="fixed top-3 right-3 z-10 flex items-center gap-1.5">
+          <Button
+            intent={
+              (usesTreeSheet ? treeSheetOpen : treeOpen) ? "secondary" : "plain"
+            }
+            size="sm"
+            onPress={handleToggleTree}
+            isDisabled={files.length === 0}
+            aria-label="Toggle file tree"
+            className="shadow-lg"
+          >
+            <ListTreeIcon className="size-4" />
+            <span>Files</span>
+            {files.length > 0 && (
+              <span className="text-xs text-muted-fg">{files.length}</span>
+            )}
+          </Button>
+          <Button
+            intent="secondary"
+            size="sm"
+            onPress={() => setFocusMode(false)}
+            aria-label="Exit focus mode"
+            className="shadow-lg"
+          >
+            <Minimize2Icon className="size-4" />
+            Exit focus
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

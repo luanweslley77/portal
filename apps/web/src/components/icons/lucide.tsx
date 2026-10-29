@@ -26,8 +26,10 @@ import {
   ListPlus,
   ListTree,
   LogOut,
+  Maximize2,
   MessageCircle,
   MessageSquare,
+  Minimize2,
   Minus,
   Monitor,
   Moon,
@@ -94,8 +96,11 @@ export const HomeIcon = createAppIcon(Home);
 export const InformationCircleIcon = createAppIcon(Info);
 export const KeyIcon = createAppIcon(KeyRound);
 export const LifebuoyIcon = createAppIcon(LifeBuoy);
-export const ListPlusIcon = createAppIcon(ListPlus);export const MinusIcon = createAppIcon(Minus);
+export const ListPlusIcon = createAppIcon(ListPlus);
+export const MinusIcon = createAppIcon(Minus);
 export const ListTreeIcon = createAppIcon(ListTree, "14px");
+export const Maximize2Icon = createAppIcon(Maximize2);
+export const Minimize2Icon = createAppIcon(Minimize2);
 export const MoonIcon = createAppIcon(Moon);
 export const PanelLeftIcon = createAppIcon(PanelLeft);
 export const PaperclipIcon = createAppIcon(Paperclip);

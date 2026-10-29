@@ -1397,3 +1397,33 @@ Antes, a página `/diff` (tanto Working tree quanto Branches) era uma lista plan
 ### 34.4 Deploy
 
 `bash scripts/deploy.sh` — `:3000` serve `index-w5cIw7PX.js` (hash validado).
+
+## 35. Modo foco na página /diff (com acesso à árvore)
+
+### 35.1 Motivação (pedido do usuário)
+
+"Posso colocar um focus mode onde aparece apenas a opção de sair do foco" — e, em seguida, "enquanto no modo focus também quero que apareça o botão da árvore de arquivos assim posso ir diretamente para o arquivo quando eu clicar nele".
+
+### 35.2 O que foi implementado (`apps/web/src/routes/_app/diff.tsx`)
+
+- Botão **Focus** (ícone `Maximize2`) no cabeçalho, ao lado de Files/Refresh.
+- Ao entrar, o root da página vira `fixed inset-0 z-50 flex h-full flex-col bg-bg`, cobrindo a sidebar global e a barra de breadcrumb do app; cabeçalho, linha `Working tree/Branches`, controles de branches e resumo são escondidos via `hidden` (não desmontados), e o diff ocupa a tela inteira.
+- **Toolbar flutuante** no canto superior direito (única chrome visível), com:
+  - **Files** (sempre com o rótulo e a contagem visíveis, mesmo no mobile) que abre/fecha a árvore: `aside` inline de 240 px no desktop, `Sheet` no mobile/tablet;
+  - **Exit focus** (`Minimize2`).
+- Clicar em um arquivo na árvore dentro do foco rola até a seção e mantém o foco ativo; o destaque ativo continua funcionando. No mobile, escolher um arquivo fecha o sheet sem sair do foco.
+- `Esc` sai do foco; se o sheet da árvore estiver aberto, o primeiro `Esc` apenas o fecha (guard `!treeSheetOpen`).
+- O modo foco é temporário (não persiste ao trocar de rota/recarregar); as preferências de árvore/controles continuam as mesmas do §34.
+- **Posição de leitura preservada sem remontar o container de scroll**: nada antes da linha do diff é desmontado (só ganha `hidden`), então o mesmo nó `[data-slot="diff-scroll"]` permanece montado. No desktop, o alargamento de 638→1040/1280 px causa reflow e o scroll anchoring do browser ajusta `scrollTop` (2500→1920), mantendo o trecho lido na tela; ao sair, o valor volta a 2500. No mobile (388→390 px) não há reflow e o `scrollTop` fica idêntico.
+
+### 35.3 Verificação (build `index-BDC7SRDj.js`, Playwright headless + Chromium 1200)
+
+- **Desktop 1280×800**: no foco, root em `[0,0,1280,800]`, `h1`/linha de modos/controles ocultos, árvore visível com 53 arquivos; diff 1040 px (árvore) e 1280 px ao escondê-la pelo botão Files flutuante. Clique no último arquivo: `scrollTop` 2526, topo da seção == topo do container (0 px), destaque ativo; foco continua ativo.
+- **Mobile 390×844**: root `[0,0,390,844]`, toolbar com `Files 53` e `Exit focus`; Files abre o sheet com 53 arquivos; escolher o último fecha o dialog, rola até a seção (topo 0 == container 0) e **permanece no foco**.
+- **Saída**: botão Exit focus restaura cabeçalho/linha de modos/árvore e a largura normal (638 px com árvore); `Esc` também sai do foco no desktop.
+- **Sem regressão** no fluxo do §34 (verificados os mesmos cenários: árvore 240 px, +240 px ao esconder, controles 97/181 px, persistência após remontagem).
+- `npx tsc --noEmit`: apenas os 3 erros pré-existentes. `npx prettier --check` limpo em `diff.tsx` e `lucide.tsx`.
+
+### 35.4 Deploy
+
+`bash scripts/deploy.sh` — `:3000` serve `index-BDC7SRDj.js` (hash validado).
