@@ -1360,3 +1360,40 @@ Após a parte 1 ainda quebravam palavras com hífen (`tone-mapeia`, `DCI-P3`, `s
 - **Breakpoint**: o CSS compilado gera `.sm\:prose-sm` dentro de `@media (width>=40rem)` — os 14px valem só a partir de 640px, inclusive as regras-filhas (parágrafos, headings, código).
 - `npx tsc --noEmit`: apenas os 3 erros pré-existentes.
 - `bash scripts/deploy.sh`: `:3000` serve `index-eZhYsyiK.js` (hash validado).
+
+## 34. Árvore de arquivos e controles de branches recolhíveis na página /diff
+
+### 34.1 Motivação (pedido do usuário)
+
+"Quando visualizando diffs entre branches acaba que toma muito espaço da tela, tornando a leitura difícil, e lá nem mostra a árvore de arquivos para ir direto, quero fazer com que seja possível esconder e exibir tanto a árvore de arquivos como a seleção de branches o intuito é disponibilizar mais tela para ter uma leitura melhor."
+
+Antes, a página `/diff` (tanto Working tree quanto Branches) era uma lista plana de arquivos sem navegação lateral, e o bloco de comparação (dois selects + meta + botões de estilo) ficava sempre ocupando ~100 px no desktop e ~180 px no mobile.
+
+### 34.2 O que foi implementado (`apps/web/src/routes/_app/diff.tsx`)
+
+- **Árvore de arquivos** derivada do próprio diff (`parsePatchFiles`), presente nos dois modos:
+  - agrupamento por diretório, diretórios antes de arquivos, ordem alfabética;
+  - diretórios recolhíveis (todos expandidos por padrão) com chevron e ícone de pasta;
+  - cada arquivo mostra status (`A` verde, `M` amarelo, `D` vermelho, `R` cinza) e `+adições/-remoções` calculados somando `hunk.additionLines`/`hunk.deletionLines`;
+  - clique rola o painel de diff até a seção do arquivo (`id="diff-file-N"` + `scrollIntoView`) e destaca a linha ativa; `title` mostra o caminho completo (e `prev → novo` em renomeações);
+  - o destaque é limpo quando o payload do diff muda (troca de base/head/estilo).
+- **Desktop (≥1024 px)**: árvore em `aside` inline de **240 px** (`w-60`) com cabeçalho `N files`, entre a árvore global do app e o diff; o diff ocupa o restante (`min-w-0 flex-1 overflow-auto`).
+- **Mobile/tablet (<1024 px)**: a mesma árvore em `Sheet` lateral esquerdo de **320 px**, aberto pelo botão **Files**; escolher um arquivo fecha o sheet e rola o diff. O sheet não ocupa largura permanente.
+- **Esconder/exibir a árvore**: botão **Files** no cabeçalho (ícone de árvore + contagem). No desktop ele alterna o `aside`; abaixo de `lg` abre o sheet. O estado “pressionado” do botão reflete o painel realmente aberto em cada viewport.
+- **Esconder/exibir a seleção de branches**: botão **Compare** (chevron) na linha `Working tree | Branches`. Expandido, mantém os dois selects + meta + `Since divergence/Full diff`; recolhido, remove o bloco inteiro e mostra um resumo compacto `base → head` na própria linha de modos (desktop) ou numa linha fina adicional (mobile, junto da meta).
+- **Persistência**: `localStorage` com `portal-diff-tree-open` e `portal-diff-branch-controls-open` (padrão aberto; mesmo padrão try/catch de `use-thinking-mode`). Modo, estilo e refs continuam em memória, como antes.
+- Sem dependências novas; `Sheet`/`Button` e tokens Tailwind já existentes.
+
+### 34.3 Verificação (build `index-w5cIw7PX.js`, Playwright headless + Chromium 1200)
+
+- **Desktop 1280×800 (Branches, `main...fix/mobile-content-clipping`)**: árvore **240 px**, 53 arquivos na árvore = 53 seções de diff; diff **638 px** com árvore e **878 px** sem (+240 exatos). Clique no último arquivo da árvore: `scrollTop` 3166, topo da seção == topo do container (264 px), linha destacada.
+- **Recolher diretório**: 53 arquivos visíveis → 3 (subárvores escondidas); reexpandir volta a 53.
+- **Controles de branches**: bloco de **97 px** no desktop e **181 px** no mobile; recolhido, `data-slot="diff-branch-controls"` some e o resumo `main → fix/mobile-content-clipping` permanece visível.
+- **Persistência**: após sair e voltar para `/diff` (remontagem do componente, sem recarregar o app), árvore e controles continuam recolhidos; reabrir restaura (240 px / 97 px).
+- **Mobile 390×844**: nenhuma árvore inline; botão Files abre sheet de 320 px (x=8), 53 arquivos, `scrollWidth == innerWidth` (sem overflow horizontal); escolher o último arquivo fecha o dialog e alinha a seção ao topo do painel (`scrollTop` 4526, topo 364 == container 364); recolher os controles remove o bloco de 181 px mantendo a rolagem.
+- **Typecheck**: `npx tsc --noEmit` apenas com os 3 erros pré-existentes de `use-opencode-events.ts`/`use-session-messages.ts`.
+- **Prettier**: `npx prettier --check apps/web/src/routes/_app/diff.tsx` limpo.
+
+### 34.4 Deploy
+
+`bash scripts/deploy.sh` — `:3000` serve `index-w5cIw7PX.js` (hash validado).
